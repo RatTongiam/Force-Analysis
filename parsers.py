@@ -71,87 +71,40 @@ def parse_vald_forcedecks_exact(uploaded_file):
         return dt, t, f_left, f_right, f_total
 
 def parse_qtm_json(uploaded_file):
+    uploaded_file.seek(0)
     content = json.load(uploaded_file)
     root = content[0] if isinstance(content, list) else content
-    
-    freq_camera = root.get("Timebase", {}).get("Frequency", 120.0)
     plates = root.get("ForcePlates", [])
     
     if len(plates) == 0:
-        return None, None, None, None, None
+        return None, None, [], []
         
-    if len(plates) >= 2:
-        vals_l = np.array(plates[0]["Parts"][0]["Values"])
-        vals_r = np.array(plates[-1]["Parts"][0]["Values"])
-        num_frames = min(len(vals_l), len(vals_r))
-        f_left = np.abs(vals_l[:num_frames, 2])
-        f_right = np.abs(vals_r[:num_frames, 2])
-    else:
-        vals = np.array(plates[0]["Parts"][0]["Values"])
-        num_frames = len(vals)
-        f_left = np.abs(vals[:num_frames, 2]) * 0.5
-        f_right = np.abs(vals[:num_frames, 2]) * 0.5
-        
-    if num_frames > 5000 and freq_camera <= 200.0:
-        freq_force_plate = 2000.0
-    else:
-        freq_force_plate = freq_camera
-
-    dt = 1.0 / freq_force_plate
-    t = np.arange(num_frames) * dt
-    
-    f_total_raw = f_left + f_right
-    quiet_check = np.mean(f_total_raw[:min(100, num_frames)])
-    if quiet_check > 3000.0:
-        f_left = f_left / 1000.0
-        f_right = f_right / 1000.0
-        f_total = f_total_raw / 1000.0
-    else:
-        f_total = f_total_raw
-
-    return dt, t, f_left, f_right, f_total
-
-def parse_single_csv_cforce(uploaded_file):
-    uploaded_file.seek(0)
-    lines = uploaded_file.getvalue().decode('utf-8', errors='ignore').splitlines()
-    
-    data = []
-    for line in lines[1:]:
-        line_str = line.strip()
-        if not line_str:
-            continue
-        parts = line_str.split(',')
-        if len(parts) >= 4:
-            try:
-                t_val = float(parts[0].strip())
+    plate_data = []
+    for idx, plate in enumerate(plates):
+        parts = plate.get("Parts", [])
+        if len(parts) > 0 and len(parts[0].get("Values", [])) > 0:
+            vals = np.array(parts[0]["Values"])
+            if vals.shape[1] >= 9:
+                col_means = [np.mean(np.abs(vals[:, c])) for c in [2, 5, 8] if c < vals.shape[1]]
+                best_col = [2, 5, 8][np.argmax(col_means)] if col_means else 2
+                fz = np.abs(vals[:, best_col])
                 
-                def clean_val(val_str):
-                    val_str = val_str.strip()
-                    match = re.findall(r'-?\d+\.?\d*', val_str)
-                    if len(match) == 1:
-                        return float(match[0])
-                    elif len(match) > 1:
-                        # Handle formatting artifacts like "3 481.97" by taking the primary decimal number part
-                        return float("".join(match[1:])) if len(val_str.split()) > 1 else float(match[0])
-                    return 0.0
-
-                f_val = clean_val(parts[1])
-                l_val = clean_val(parts[2])
-                r_val = clean_val(parts[3])
+                # Derive sampling rate strictly from sample count and timeframe range
+                range_info = parts[0].get("Range", {})
+                n_start = range_info.get("Start", 1)
+                n_end = range_info.get("End", len(fz))
+                total_frames = max(1, n_end - n_start + 1)
                 
-                data.append([t_val, f_val, l_val, r_val])
-            except Exception:
-                pass
+                # If frame count is significantly larger than camera frames, calculate exact force dt
+                cam_freq = root.get("Timebase", {}).get("Frequency", 120.0)
+                duration = total_frames / 2000.0 if total_frames > 5000 else total_frames / (cam_freq * (total_frames / cam_freq))
+                dt = duration / total_frames if total_frames > 0 else 1.0 / 2000.0
                 
-    if len(data) == 0:
-        return 0.001, np.array([]), np.array([]), np.array([]), np.array([])
-        
-    df = pd.DataFrame(data, columns=['time', 'force', 'left', 'right'])
-    t = df['time'].values.astype(float)
-    dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
-    
-    f_total = np.abs(df['force'].values.astype(float))
-    f_left = np.abs(df['left'].values.astype(float))
-    f_right = np.abs(df['right'].values.astype(float))
-    
-    return dt, t, f_left, f_right, f_total
+                plate_data.append({
+                    "id": idx,
+                    "name": plate.get("Name", f"Force-plate {idx+1}"),
+                    "fz": fz,
+                    "dt": dt
+                })
+                
+    return plate_data
