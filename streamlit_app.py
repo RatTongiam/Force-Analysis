@@ -63,28 +63,45 @@ def parse_tsv(uploaded_file):
     return freq, np.array(data), metadata
 
 def parse_vald_forcedecks(uploaded_file):
+    """
+    Robust Parser for VALD ForceDecks CSV/TSV Export files.
+    Accurately identifies the data header row to avoid tokenizing errors.
+    """
     raw_text = uploaded_file.getvalue().decode('utf-8', errors='ignore')
     lines = raw_text.splitlines()
     
     header_idx = 0
     metadata = {}
     
+    # Strict Header Detection
     for idx, line in enumerate(lines):
-        line_lower = line.lower()
-        if (',' in line or '\t' in line) and any(k in line_lower for k in ['time', 'left', 'right', 'force', 'sample']):
+        line_str = line.strip()
+        if not line_str:
+            continue
+        
+        line_lower = line_str.lower()
+        cols = line_str.split('\t') if '\t' in line_str else line_str.split(',')
+        
+        # Header row MUST have >= 3 columns AND contain time AND force/left/right keywords
+        has_time = any(k in line_lower for k in ['time', 'sample'])
+        has_force = any(k in line_lower for k in ['force', 'left', 'right', 'fz'])
+        
+        if len(cols) >= 3 and has_time and has_force:
             header_idx = idx
             break
         else:
-            if line.strip() and not line.startswith('---'):
-                parts = line.split(':') if ':' in line else line.split('\t')
+            if not line_str.startswith('---'):
+                parts = line_str.split(':') if ':' in line_str else line_str.split('\t')
                 if len(parts) == 2:
                     metadata[parts[0].strip().title()] = parts[1].strip()
                 elif len(parts) == 1 and parts[0].strip():
                     metadata[f"Header {idx+1}"] = parts[0].strip()
 
+    # Extract Data Content starting exactly at the detected header row
     data_content = "\n".join(lines[header_idx:])
     sep = '\t' if '\t' in lines[header_idx] else ','
-    df = pd.read_csv(io.StringIO(data_content), sep=sep)
+    
+    df = pd.read_csv(io.StringIO(data_content), sep=sep, on_bad_lines='skip')
     
     col_map = {str(c).strip().lower(): c for c in df.columns}
     
@@ -162,7 +179,7 @@ def calc_impulse(arr, dt):
 def calc_net_impulse(arr, base, dt):
     return np.sum(arr - base) * dt
 
-# --- PDF GENERATION ENGINE INCLUDING METADATA ---
+# --- PDF GENERATION ENGINE ---
 def generate_pdf_report(report_data, metadata, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, bw):
     pdf_buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -186,7 +203,6 @@ def generate_pdf_report(report_data, metadata, t, sf, sl, sr, t_start, t_braking
         Spacer(1, 8)
     ]
     
-    # Metadata Section in PDF
     if metadata:
         meta_table_data = []
         items = list(metadata.items())
@@ -207,7 +223,6 @@ def generate_pdf_report(report_data, metadata, t, sf, sl, sr, t_start, t_braking
         story.append(meta_table)
         story.append(Spacer(1, 8))
 
-    # Matplotlib Chart PNG
     fig_plt, ax = plt.subplots(figsize=(8, 3.0), dpi=200)
     ax.plot(t, sl, label='Left Limb', color='#818cf8', linewidth=1.5)
     ax.plot(t, sr, label='Right Limb', color='#f87171', linewidth=1.5)
@@ -334,7 +349,6 @@ elif data_mode == "Single CSV":
 
 # --- CORE BIOMECHANICAL ENGINE ---
 if t is not None and f_total is not None:
-    # Display Metadata UI Block
     if file_metadata:
         st.markdown("#### 📋 Subject & Test Metadata")
         meta_cols = st.columns(4)
@@ -358,7 +372,6 @@ if t is not None and f_total is not None:
     mass_left = bw_left / g if bw_left > 0 else mass * 0.5
     mass_right = bw_right / g if bw_right > 0 else mass * 0.5
     
-    # Sub-phase Detection
     flight_threshold = 30.0
     flight_indices = np.where(sf < flight_threshold)[0]
     tIdx_auto = flight_indices[0] if len(flight_indices) > 0 else len(sf) - 1
@@ -383,7 +396,6 @@ if t is not None and f_total is not None:
     zero_vel_matches = np.where(vel_temp[bIdx_auto - sIdx_auto:] >= 0)[0]
     zIdx_auto = (bIdx_auto + zero_vel_matches[0]) if len(zero_vel_matches) > 0 else bIdx_auto
 
-    # Sliders for Adjusting Phase Times
     st.sidebar.markdown("---")
     st.sidebar.subheader("Phase Adjustment")
     
@@ -400,7 +412,6 @@ if t is not None and f_total is not None:
     lIdx_matches = np.where((t > t_takeoff + 0.05) & (sf >= flight_threshold))[0]
     lIdx = lIdx_matches[0] if len(lIdx_matches) > 0 else len(sf) - 1
 
-    # Kinematics Integration
     vel_total = np.zeros(len(sf))
     vel_l = np.zeros(len(sf))
     vel_r = np.zeros(len(sf))
@@ -424,7 +435,6 @@ if t is not None and f_total is not None:
     propulsive_dur = t[tIdx] - t[zIdx]
     flight_dur = max(0.0, t[lIdx] - t[tIdx])
 
-    # 24 PCA Metrics
     jh_flight = (g * (flight_dur ** 2)) / 8.0 * 100.0
     v_takeoff = vel_total[tIdx]
     jh_impulse = ((v_takeoff ** 2) / (2.0 * g)) * 100.0
@@ -521,7 +531,6 @@ if t is not None and f_total is not None:
         }
     }
 
-    # Plot Force-Time Chart
     max_f = np.max(sf)
     fig_force = go.Figure()
     fig_force.add_trace(go.Scatter(x=t, y=sl, name="Left Limb", line=dict(color='#818cf8', width=2)))
@@ -544,7 +553,6 @@ if t is not None and f_total is not None:
     fig_force.update_layout(title="FORCE-TIME ANALYSIS & SUB-PHASES", xaxis_title="Time (s)", yaxis_title="Force (N)", height=420)
     st.plotly_chart(fig_force, use_container_width=True)
 
-    # Generate PDF Download Button
     pdf_bytes = generate_pdf_report(report, file_metadata, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, bw)
     st.sidebar.markdown("---")
     st.sidebar.download_button(
@@ -554,7 +562,6 @@ if t is not None and f_total is not None:
         mime="application/pdf"
     )
 
-    # Plot Asymmetry Deficit Chart
     deficits = np.where(sf >= 50, ((sl - sr) / np.maximum(sl, sr)) * 100, 0)
     fig_deficit = go.Figure()
     fig_deficit.add_trace(go.Scatter(x=t, y=deficits, name="Asymmetry", fill='tozeroy', fillcolor='rgba(77, 41, 148, 0.15)', line=dict(color='#4d2994', width=2)))
@@ -562,7 +569,6 @@ if t is not None and f_total is not None:
     fig_deficit.update_layout(title="L/R ASYMMETRY % (Threshold Alert)", xaxis_title="Time (s)", yaxis_title="Deficit %", yaxis_range=[-55, 55], height=260)
     st.plotly_chart(fig_deficit, use_container_width=True)
 
-    # Render Report Table
     st.markdown("### Standard Biomechanical Analysis Report (Anicic et al., 2023)")
     table_rows = []
     for phase_name, metrics in report.items():
@@ -577,7 +583,6 @@ if t is not None and f_total is not None:
     
     st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
 
-    # Download PDF Button
     st.download_button(
         label="📥 Download A4 PDF Report",
         data=pdf_bytes,
