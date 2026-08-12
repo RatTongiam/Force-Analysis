@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from scipy.signal import butter, filtfilt
+from scipy.ndimage import label
 
 def butter_lowpass_filter(data, cutoff=10.0, fs=2000.0, order=4):
     nyq = 0.5 * fs
@@ -36,12 +37,74 @@ def calc_deficit_str(val_l, val_r):
 
 def detect_phases_sequential(t, sf_raw, dt, quiet_samples):
     n_samples = len(sf_raw)
-    # Set safe default indices based on standard timeline fractions to prevent crashing
-    sIdx_auto = int(n_samples * 0.1)
-    bIdx_auto = int(n_samples * 0.2)
-    zIdx_auto = int(n_samples * 0.3)
-    tIdx_auto = int(n_samples * 0.6)
-    lIdx_auto = int(n_samples * 0.8)
+    fs = 1.0 / dt
+    g = 9.80665
+
+    sf = butter_lowpass_filter(sf_raw, cutoff=10.0, fs=fs, order=4)
+    
+    bw = np.mean(sf[:quiet_samples]) if quiet_samples < n_samples else np.mean(sf[:50])
+    force_sd = np.std(sf[:quiet_samples]) if quiet_samples < n_samples else 5.0
+    mass = bw / g if bw > 0 else 70.0
+
+    # 1. Detect Flight Phase (Force < 25N) to find Take-off and Landing
+    flight_threshold = 25.0
+    flight_mask = sf < flight_threshold
+    labeled, num_features = label(flight_mask)
+    
+    if num_features > 0:
+        block_lengths = [np.sum(labeled == i) for i in range(1, num_features + 1)]
+        valid_blocks = [(i, np.sum(labeled == i)) for i in range(1, num_features + 1) if np.where(labeled == i)[0][0] > quiet_samples]
+        if valid_blocks:
+            main_block_label = max(valid_blocks, key=lambda x: x[1])[0]
+        else:
+            main_block_label = np.argmax(block_lengths) + 1
+            
+        flight_indices = np.where(labeled == main_block_label)[0]
+        tIdx_auto = flight_indices[0]
+        lIdx_auto = flight_indices[-1]
+    else:
+        tIdx_auto = int(n_samples * 0.7)
+        lIdx_auto = int(n_samples * 0.8)
+
+    # 2. Peak Propulsion (Max force before takeoff)
+    prop_search_start = max(0, tIdx_auto - int(1.5 * fs))
+    if tIdx_auto > prop_search_start:
+        peak_prop_idx = prop_search_start + np.argmax(sf[prop_search_start:tIdx_auto])
+    else:
+        peak_prop_idx = max(0, tIdx_auto - 1)
+
+    # 3. Braking Minimum Force (Min force dip before peak propulsion)
+    if peak_prop_idx > prop_search_start:
+        bIdx_auto = prop_search_start + np.argmin(sf[prop_search_start:peak_prop_idx])
+    else:
+        bIdx_auto = max(0, peak_prop_idx - int(0.2 * fs))
+
+    # 4. Unweighting Onset (Backwards from braking min force)
+    threshold_bw = max(bw * 0.975, bw - 5 * force_sd)
+    back_search_window = sf[:bIdx_auto]
+    bw_crossings = np.where(back_search_window >= threshold_bw)[0]
+    
+    if len(bw_crossings) > 0:
+        sIdx_auto = bw_crossings[-1]
+    else:
+        sIdx_auto = max(0, bIdx_auto - int(0.4 * fs))
+
+    # 5. Propulsive Onset (Velocity = 0 crossing)
+    vel_temp = np.cumsum((sf[sIdx_auto:tIdx_auto + 1] - bw) / mass) * dt
+    b_rel = max(0, bIdx_auto - sIdx_auto)
+    zero_crossings = np.where(vel_temp[b_rel:] >= 0)[0]
+    if len(zero_crossings) > 0:
+        zIdx_auto = bIdx_auto + zero_crossings[0]
+    else:
+        zIdx_auto = bIdx_auto
+
+    # Logical Bounding & Order Enforcement
+    tIdx_auto = min(tIdx_auto, n_samples - 1)
+    lIdx_auto = min(lIdx_auto, n_samples - 1)
+    zIdx_auto = min(zIdx_auto, tIdx_auto)
+    bIdx_auto = min(bIdx_auto, zIdx_auto)
+    sIdx_auto = min(sIdx_auto, bIdx_auto)
+
     return sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto
 
 def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lIdx):
