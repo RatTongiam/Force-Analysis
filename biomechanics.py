@@ -1,6 +1,20 @@
 import numpy as np
 import pandas as pd
+from scipy.signal import butter, filtfilt
 from scipy.ndimage import label
+
+def butter_lowpass_filter(data, cutoff=10.0, fs=2000.0, order=4):
+    """
+    Standard Biomechanical 4th-order Zero-Lag Low-Pass Butterworth Filter
+    (Anicic et al., 2023 / Street et al., 2018)
+    """
+    nyq = 0.5 * fs
+    normal_cutoff = cutoff / nyq
+    if normal_cutoff >= 1.0:
+        normal_cutoff = 0.99
+    b, a = butter(order, normal_cutoff, btype='low', analog=False)
+    y = filtfilt(b, a, data)
+    return y
 
 def moving_average(arr, window):
     if window <= 1:
@@ -25,15 +39,21 @@ def calc_deficit_str(val_l, val_r):
     except (ValueError, TypeError):
         return "-"
 
-def detect_phases_sequential(t, sf, dt, quiet_samples):
-    n_samples = len(sf)
+def detect_phases_sequential(t, sf_raw, dt, quiet_samples):
+    n_samples = len(sf_raw)
+    fs = 1.0 / dt
     g = 9.80665
+
+    # --- 1. FILTER RAW SIGNAL WITH 10Hz BUTTERWORTH FILTER ---
+    sf = butter_lowpass_filter(sf_raw, cutoff=10.0, fs=fs, order=4)
+    
     bw = np.mean(sf[:quiet_samples])
     force_sd = np.std(sf[:quiet_samples])
     mass = bw / g
 
-    # 1. Anchor: Find the main airborne segment (Take-off & Landing)
-    flight_mask = sf < 20.0
+    # --- 2. ANCHOR: MAIN AIRBORNE FLIGHT PHASE ---
+    flight_threshold = 20.0
+    flight_mask = sf < flight_threshold
     labeled, num_features = label(flight_mask)
     
     if num_features > 0:
@@ -47,31 +67,30 @@ def detect_phases_sequential(t, sf, dt, quiet_samples):
         tIdx_auto = int(n_samples * 0.7)
         lIdx_auto = int(n_samples * 0.8)
 
-    # 2. Find Propulsion Peak before Take-off
-    prop_search_start = max(0, tIdx_auto - int(1.5 / dt))
+    # --- 3. PEAK PROPULSION BEFORE TAKEOFF ---
+    prop_search_start = max(0, tIdx_auto - int(1.5 * fs))
     if tIdx_auto > prop_search_start:
         peak_prop_idx = prop_search_start + np.argmax(sf[prop_search_start:tIdx_auto])
     else:
         peak_prop_idx = max(0, tIdx_auto - 1)
 
-    # 3. Find Braking Minimum Force (Dip before Propulsion)
+    # --- 4. BRAKING MINIMUM FORCE ---
     if peak_prop_idx > prop_search_start:
         bIdx_auto = prop_search_start + np.argmin(sf[prop_search_start:peak_prop_idx])
     else:
-        bIdx_auto = max(0, peak_prop_idx - int(0.2 / dt))
+        bIdx_auto = max(0, peak_prop_idx - int(0.2 * fs))
 
-    # 4. ROBUST Unweighting Onset (sIdx): Scan BACKWARDS from Braking Min Force
-    # Look for the last frame before the dip where force was within 97.5% BW threshold
-    threshold_bw = max(bw * 0.975, bw - 5 * force_sd)
-    back_search_window = sf[:bIdx_auto]
-    bw_crossings = np.where(back_search_window >= threshold_bw)[0]
+    # --- 5. UNWEIGHTING ONSET (BACKWARDS FROM BRAKING MIN FORCE) ---
+    # Threshold: Force drops below BW - 5*SD or BW - 2.5% BW
+    dev = max(force_sd * 5.0, bw * 0.025, 10.0)
+    bw_crossings = np.where((np.arange(n_samples) < bIdx_auto) & (sf >= bw - dev))[0]
     
     if len(bw_crossings) > 0:
-        sIdx_auto = bw_crossings[-1]  # Exact start of downward countermovement
+        sIdx_auto = bw_crossings[-1]
     else:
-        sIdx_auto = max(0, bIdx_auto - int(0.4 / dt))
+        sIdx_auto = max(0, bIdx_auto - int(0.4 * fs))
 
-    # 5. Propulsive Onset (V = 0 crossing)
+    # --- 6. PROPULSIVE ONSET (V = 0 CROSSING) ---
     vel_temp = np.cumsum((sf[sIdx_auto:tIdx_auto + 1] - bw) / mass) * dt
     b_rel = max(0, bIdx_auto - sIdx_auto)
     zero_crossings = np.where(vel_temp[b_rel:] >= 0)[0]
@@ -89,9 +108,16 @@ def detect_phases_sequential(t, sf, dt, quiet_samples):
 
     return sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto
 
-def calculate_metrics(t, sf, sl, sr, dt, sIdx, bIdx, zIdx, tIdx, lIdx):
-    n_samples = len(sf)
+def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lIdx):
+    n_samples = len(sf_raw)
+    fs = 1.0 / dt
     g = 9.80665
+
+    # Apply Butterworth Filter to raw signals
+    sf = butter_lowpass_filter(sf_raw, cutoff=10.0, fs=fs, order=4)
+    sl = butter_lowpass_filter(sl_raw, cutoff=10.0, fs=fs, order=4)
+    sr = butter_lowpass_filter(sr_raw, cutoff=10.0, fs=fs, order=4)
+
     quiet_samples = max(1, min(int(0.5 / dt), n_samples))
     
     bw = np.mean(sf[:quiet_samples])
