@@ -134,17 +134,17 @@ if t is not None and f_total is not None:
     g = 9.80665
     quiet_samples = max(1, int(0.5 / dt))
     
-    # 1. Quiet Standing Baseline Calibration
+    # Calibration
     bw = np.mean(sf[:quiet_samples])
     bw_left = np.mean(sl[:quiet_samples])
     bw_right = np.mean(sr[:quiet_samples])
     
     force_sd = np.std(sf[:quiet_samples])
     mass = bw / g
-    mass_left = bw_left / g
-    mass_right = bw_right / g
+    mass_left = bw_left / g if bw_left > 0 else mass * 0.5
+    mass_right = bw_right / g if bw_right > 0 else mass * 0.5
     
-    # 2. Sequential Sub-phase Detection
+    # Sub-phase Detection
     flight_threshold = 30.0
     flight_indices = np.where(sf < flight_threshold)[0]
     tIdx_auto = flight_indices[0] if len(flight_indices) > 0 else len(sf) - 1
@@ -186,16 +186,13 @@ if t is not None and f_total is not None:
     lIdx_matches = np.where((t > t_takeoff + 0.05) & (sf >= flight_threshold))[0]
     lIdx = lIdx_matches[0] if len(lIdx_matches) > 0 else len(sf) - 1
 
-    # Kinematic Arrays Integration
+    # Kinematics Integration
     vel_total = np.zeros(len(sf))
     vel_l = np.zeros(len(sf))
     vel_r = np.zeros(len(sf))
     disp_total = np.zeros(len(sf))
 
-    cV = 0.0
-    cVL = 0.0
-    cVR = 0.0
-    cD = 0.0
+    cV = cVL = cVR = cD = 0.0
 
     for i in range(sIdx, tIdx + 1):
         cV += ((sf[i] - bw) / mass) * dt
@@ -213,14 +210,12 @@ if t is not None and f_total is not None:
     propulsive_dur = t[tIdx] - t[zIdx]
     flight_dur = max(0.0, t[lIdx] - t[tIdx])
 
-    # 24 PCA Metrics Calculations
-    # Performance Metrics
-    jh_flight = (g * (flight_dur ** 2)) / 8.0 * 100.0  # cm
+    # 24 PCA Metrics
+    jh_flight = (g * (flight_dur ** 2)) / 8.0 * 100.0
     v_takeoff = vel_total[tIdx]
-    jh_impulse = ((v_takeoff ** 2) / (2.0 * g)) * 100.0  # cm
+    jh_impulse = ((v_takeoff ** 2) / (2.0 * g)) * 100.0
     rsi_modified = (jh_flight / 100.0) / contraction_time if contraction_time > 0 else 0.0
 
-    # Sub-phase Slice Arrays
     unweight_f = sf[sIdx:bIdx + 1]
     unweight_impulse = calc_impulse(unweight_f, dt)
 
@@ -235,6 +230,8 @@ if t is not None and f_total is not None:
     avg_brak_fr = calc_avg(brak_fr)
     avg_brak_p = calc_avg(brak_p)
     peak_brak_f = np.max(brak_f) if len(brak_f) > 0 else 0.0
+    peak_brak_fl = np.max(brak_fl) if len(brak_fl) > 0 else 0.0
+    peak_brak_fr = np.max(brak_fr) if len(brak_fr) > 0 else 0.0
     peak_v_neg = np.min(vel_total[sIdx:zIdx + 1]) if len(vel_total[sIdx:zIdx + 1]) > 0 else 0.0
 
     brak_impulse = calc_impulse(brak_f, dt)
@@ -265,19 +262,16 @@ if t is not None and f_total is not None:
     prop_net_impulse = calc_net_impulse(prop_f, bw, dt)
     positive_impulse = brak_impulse + prop_impulse
 
-    # Landing Metrics
     land_impulse = 0.0
     if lIdx > tIdx and lIdx < len(sf):
         land_end_idx = min(len(sf), lIdx + int(0.5 / dt))
         land_impulse = calc_impulse(sf[lIdx:land_end_idx], dt)
 
-    # Strategy Metrics
-    com_depth = abs(disp_total[zIdx] - disp_total[sIdx]) * 100.0  # cm
-    com_takeoff = disp_total[tIdx] * 100.0  # cm
+    com_depth = abs(disp_total[zIdx] - disp_total[sIdx]) * 100.0
+    com_takeoff = disp_total[tIdx] * 100.0
     leg_stiffness = (peak_brak_f / (com_depth / 100.0)) if com_depth > 0 else 0.0
     flight_jump_ratio = flight_dur / contraction_time if contraction_time > 0 else 0.0
 
-    # --- REPORT STRUCTURED BY 4 PCA COMPONENTS (ANICIC ET AL., 2023) ---
     report = {
         "1. Performance Component (59% Variance)": {
             "Jump Height - Flight Time (cm)": {"Left": "-", "Right": "-", "Total": f"{jh_flight:.1f}"},
