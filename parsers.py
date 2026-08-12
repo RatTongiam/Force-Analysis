@@ -77,7 +77,7 @@ def parse_qtm_json(uploaded_file):
     plates = root.get("ForcePlates", [])
     
     if len(plates) == 0:
-        return None, None, [], []
+        return []
         
     plate_data = []
     for idx, plate in enumerate(plates):
@@ -89,15 +89,13 @@ def parse_qtm_json(uploaded_file):
                 best_col = [2, 5, 8][np.argmax(col_means)] if col_means else 2
                 fz = np.abs(vals[:, best_col])
                 
-                # Derive sampling rate strictly from sample count and timeframe range
                 range_info = parts[0].get("Range", {})
                 n_start = range_info.get("Start", 1)
                 n_end = range_info.get("End", len(fz))
                 total_frames = max(1, n_end - n_start + 1)
                 
-                # If frame count is significantly larger than camera frames, calculate exact force dt
                 cam_freq = root.get("Timebase", {}).get("Frequency", 120.0)
-                duration = total_frames / 2000.0 if total_frames > 5000 else total_frames / (cam_freq * (total_frames / cam_freq))
+                duration = total_frames / 2000.0 if total_frames > 5000 else total_frames / cam_freq
                 dt = duration / total_frames if total_frames > 0 else 1.0 / 2000.0
                 
                 plate_data.append({
@@ -108,3 +106,47 @@ def parse_qtm_json(uploaded_file):
                 })
                 
     return plate_data
+
+def parse_single_csv_cforce(uploaded_file):
+    uploaded_file.seek(0)
+    lines = uploaded_file.getvalue().decode('utf-8', errors='ignore').splitlines()
+    
+    data = []
+    for line in lines[1:]:
+        line_str = line.strip()
+        if not line_str:
+            continue
+        parts = line_str.split(',')
+        if len(parts) >= 4:
+            try:
+                t_val = float(parts[0].strip())
+                
+                def clean_val(val_str):
+                    val_str = val_str.strip()
+                    match = re.findall(r'-?\d+\.?\d*', val_str)
+                    if len(match) == 1:
+                        return float(match[0])
+                    elif len(match) > 1:
+                        return float("".join(match[1:])) if len(val_str.split()) > 1 else float(match[0])
+                    return 0.0
+
+                f_val = clean_val(parts[1])
+                l_val = clean_val(parts[2])
+                r_val = clean_val(parts[3])
+                
+                data.append([t_val, f_val, l_val, r_val])
+            except Exception:
+                pass
+                
+    if len(data) == 0:
+        return 0.001, np.array([]), np.array([]), np.array([]), np.array([])
+        
+    df = pd.DataFrame(data, columns=['time', 'force', 'left', 'right'])
+    t = df['time'].values.astype(float)
+    dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
+    
+    f_total = np.abs(df['force'].values.astype(float))
+    f_left = np.abs(df['left'].values.astype(float))
+    f_right = np.abs(df['right'].values.astype(float))
+    
+    return dt, t, f_left, f_right, f_total
