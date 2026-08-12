@@ -30,7 +30,10 @@ data_mode = st.sidebar.radio("Select Input Mode", [
 filter_size = st.sidebar.selectbox("Smoothing Filter", [1, 7, 15, 31], index=2)
 threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
 
-# Helper Functions
+# ==============================================================================
+# 1. PARSER ENGINES
+# ==============================================================================
+
 def parse_tsv(uploaded_file):
     lines = uploaded_file.getvalue().decode('utf-8', errors='ignore').splitlines()
     freq = 2000.0
@@ -60,10 +63,10 @@ def parse_tsv(uploaded_file):
 
 def parse_vald_forcedecks_exact(uploaded_file):
     """
-    VALD ForceDecks Parser with Flight Phase Zero-Offset Calibration.
-    - Reads numerical data starting from Row 11 (skiprows=10)
-    - Col A [0] = Time (s), Col B [1] = Left Force Fz, Col E [4] = Right Force Fz
-    - Subtracts residual force offset during flight phase to secure true 0N floor.
+    Exact Parser for VALD ForceDecks CSV/TSV Export files:
+    - Reads starting from Row 11 (skiprows=10)
+    - Col A [0] = Time, Col B [1] = Left Force Fz, Col E [4] = Right Force Fz
+    - Applies Flight Phase Zero-Offset Correction
     """
     filename = uploaded_file.name.lower()
     sep = '\t' if filename.endswith('.tsv') else ','
@@ -79,8 +82,7 @@ def parse_vald_forcedecks_exact(uploaded_file):
     f_right = np.abs(df.iloc[:, 4].values.astype(float)) if df.shape[1] > 4 else f_left
     f_total = f_left + f_right
 
-    # --- FLIGHT PHASE ZERO-OFFSET CALIBRATION ---
-    # Find minimum force window after peak force to extract sensor residual offset
+    # Flight Phase Zero-Offset Calibration
     if len(f_total) > 200:
         quiet_samples = max(1, int(0.5 / dt))
         peak_idx = quiet_samples + np.argmax(f_total[quiet_samples:])
@@ -95,7 +97,6 @@ def parse_vald_forcedecks_exact(uploaded_file):
             offset_l = np.mean(f_left[win_start:win_end])
             offset_r = np.mean(f_right[win_start:win_end])
             
-            # Subtract offset if residual force is above noise floor (> 2N)
             if offset_l > 2.0:
                 f_left = np.maximum(0.0, f_left - offset_l)
             if offset_r > 2.0:
@@ -132,12 +133,16 @@ def parse_qtm_json(uploaded_file):
         
     t = np.arange(num_frames) * dt
     
-    # --- CONVERT QTM FORCES FROM mN TO N ---
+    # Unit Scale Fix: Convert mN to N
     f_left = f_left / 1000.0
     f_right = f_right / 1000.0
     f_total = f_left + f_right
     
     return dt, t, f_left, f_right, f_total
+
+# ==============================================================================
+# 2. MATH & COMPUTATIONAL HELPERS
+# ==============================================================================
 
 def moving_average(arr, window):
     if window <= 1:
@@ -165,16 +170,14 @@ def calc_deficit_str(val_l, val_r):
     except (ValueError, TypeError):
         return "-"
 
-# --- PDF GENERATION ENGINE ---
+# ==============================================================================
+# 3. PDF REPORT GENERATOR
+# ==============================================================================
+
 def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, bw):
     pdf_buffer = io.BytesIO()
     doc = SimpleDocTemplate(
-        pdf_buffer,
-        pagesize=A4,
-        rightMargin=30,
-        leftMargin=30,
-        topMargin=30,
-        bottomMargin=30
+        pdf_buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30
     )
     
     styles = getSampleStyleSheet()
@@ -264,10 +267,12 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
     pdf_buffer.seek(0)
     return pdf_buffer
 
-# Initialize Variables
+# ==============================================================================
+# 4. MAIN DATA EXECUTION FLOW
+# ==============================================================================
+
 dt, t, f_left, f_right, f_total = None, None, None, None, None
 
-# --- PARSING SECTION ---
 if data_mode == "Dual TSV (Plate A + B)":
     file_a = st.sidebar.file_uploader("Upload Plate File A (.tsv)", type=["tsv"])
     side_a = st.sidebar.selectbox("Assign Side File A", ["left", "right"], index=0)
@@ -313,7 +318,10 @@ elif data_mode == "Single CSV":
             f_right = df_csv['right force'].values if 'right force' in df_csv.columns else df_csv['force '].values * 0.5
             f_total = f_left + f_right
 
-# --- CORE BIOMECHANICAL ENGINE ---
+# ==============================================================================
+# 5. CORE ANALYSIS & REPORT RENDER
+# ==============================================================================
+
 if t is not None and f_total is not None and len(f_total) > 0:
     sf = moving_average(f_total, filter_size)
     sl = moving_average(f_left, filter_size)
@@ -332,6 +340,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     mass_left = bw_left / g if bw_left > 0 else mass * 0.5
     mass_right = bw_right / g if bw_right > 0 else mass * 0.5
     
+    # Sub-phase Boundaries Detection
     flight_threshold = 30.0
     flight_indices = np.where(sf < flight_threshold)[0]
     tIdx_auto = flight_indices[0] if len(flight_indices) > 0 else n_samples - 1
@@ -374,6 +383,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     t_split = st.sidebar.slider("Propulsive Onset (V=0)", 0.0, float(t[-1]), float(t[zIdx_auto]), step=0.005)
     t_takeoff = st.sidebar.slider("Take-off", 0.0, float(t[-1]), float(t[tIdx_auto]), step=0.005)
 
+    # Safe Boundary Array Index Bounding
     sIdx = min(max(0, int(round(t_start / dt))), n_samples - 1)
     bIdx = min(max(0, int(round(t_braking / dt))), n_samples - 1)
     zIdx = min(max(0, int(round(t_split / dt))), n_samples - 1)
