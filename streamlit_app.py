@@ -185,7 +185,7 @@ def calc_deficit_str(val_l, val_r):
         return "-"
 
 # ==============================================================================
-# 3. PDF REPORT GENERATOR (FIXED MATPLOTLIB ALPHA)
+# 3. PDF REPORT GENERATOR
 # ==============================================================================
 
 def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff):
@@ -351,39 +351,46 @@ if t is not None and f_total is not None and len(f_total) > 0:
     mass_left = bw_left / g if bw_left > 0 else mass * 0.5
     mass_right = bw_right / g if bw_right > 0 else mass * 0.5
     
-    # --- ROBUST SUB-PHASE BOUNDARIES DETECTION (POST-PEAK FLIGHT SEARCH) ---
+    # --- FOOLPROOF SUB-PHASE BOUNDARIES DETECTION ---
+    # 1. Find the true main jump peak force
     peak_overall_idx = np.argmax(sf)
-    flight_threshold = 20.0
+    flight_threshold = 15.0
     
-    flight_indices = np.where((t > t[peak_overall_idx]) & (sf < flight_threshold))[0]
-    tIdx_auto = flight_indices[0] if len(flight_indices) > 0 else n_samples - 1
+    # 2. Find flight phase (force < 15N) strictly AFTER the peak force
+    flight_candidates = np.where((t > t[peak_overall_idx]) & (sf < flight_threshold))[0]
+    
+    if len(flight_candidates) > 5:
+        # Group contiguous flight frames to find the true airborne segment
+        splits = np.where(np.diff(flight_candidates) > 1)[0]
+        segments = np.split(flight_candidates, splits + 1)
+        longest_seg = max(segments, key=len)
+        tIdx_auto = longest_seg[0]  # Take-off frame (onset of flight)
+        lIdx_auto = min(n_samples - 1, longest_seg[-1] + int(0.01 / dt)) # Landing frame
+    else:
+        # Fallback if no clean flight segment found
+        tIdx_auto = int(n_samples * 0.6)
+        lIdx_auto = int(n_samples * 0.7)
+
     tIdx_auto = min(tIdx_auto, n_samples - 1)
-    
-    lIdx_matches = np.where((t > t[tIdx_auto] + 0.05) & (sf >= flight_threshold))[0]
-    lIdx_auto = lIdx_matches[0] if len(lIdx_matches) > 0 else n_samples - 1
     lIdx_auto = min(lIdx_auto, n_samples - 1)
 
-    window_size = max(1, int(0.03 / dt))
-    threshold_dev = max(force_sd * 5, bw * 0.025)
-
-    sIdx_auto = 0
-    for i in range(quiet_samples, max(quiet_samples + 1, tIdx_auto - window_size)):
-        if i + window_size <= n_samples and np.all(np.abs(sf[i:i + window_size] - bw) > threshold_dev):
-            sIdx_auto = i
-            break
-
-    peak_force_idx = sIdx_auto + np.argmax(sf[sIdx_auto:tIdx_auto + 1])
-    peak_force_idx = min(peak_force_idx, n_samples - 1)
-    
-    if peak_force_idx > sIdx_auto:
-        min_force_idx = sIdx_auto + np.argmin(sf[sIdx_auto:peak_force_idx])
+    # 3. Find Braking Onset (Minimum force between start and takeoff peak)
+    search_start = max(0, int(quiet_samples))
+    search_end = min(tIdx_auto, int(peak_overall_idx))
+    if search_end > search_start:
+        min_force_rel_idx = np.argmin(sf[search_start:search_end])
+        bIdx_auto = search_start + min_force_rel_idx
     else:
-        min_force_idx = sIdx_auto
+        bIdx_auto = max(0, tIdx_auto - int(0.3 / dt))
 
-    bIdx_auto = min(min_force_idx, n_samples - 1)
+    # 4. Find Unweighting Onset (Where force first drops below 98% of Bodyweight before braking)
+    drop_candidates = np.where((t < t[bIdx_auto]) & (sf < bw * 0.98))[0]
+    sIdx_auto = drop_candidates[0] if len(drop_candidates) > 0 else max(0, bIdx_auto - int(0.4 / dt))
 
+    # 5. Find Propulsive Onset (V = 0 crossing between braking min and takeoff)
     vel_temp = np.cumsum((sf[sIdx_auto:tIdx_auto + 1] - bw) / mass) * dt
-    zero_vel_matches = np.where(vel_temp[bIdx_auto - sIdx_auto:] >= 0)[0]
+    b_rel = max(0, bIdx_auto - sIdx_auto)
+    zero_vel_matches = np.where(vel_temp[b_rel:] >= 0)[0]
     zIdx_auto = (bIdx_auto + zero_vel_matches[0]) if len(zero_vel_matches) > 0 else bIdx_auto
     zIdx_auto = min(zIdx_auto, n_samples - 1)
 
@@ -543,7 +550,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
 
     fig_force.add_annotation(x=t_start + (t_braking - t_start)/2, y=max_f * 1.05, text="UNWEIGHTING", showarrow=False, font=dict(color='#ca8a04', size=10))
     fig_force.add_annotation(x=t_braking + (t_split - t_braking)/2, y=max_f * 1.18, text="BRAKING", showarrow=False, font=dict(color='#ef4444', size=10))
-    fig_force.add_annotation(x=t_split + (t_takeoff - t_split)/2, y=max_f * 1.05, text="PROPULSIVE", showarrow=False, font=dict(color='#22c55e', size=10))
+    fig_force.add_annotation(x=t_split + (t_takeoff - t_split)/2, y=max_f * 1.05, text="PROPULSIVE", showarrow=False, font=dict(color='#4d2994', size=10))
 
     fig_force.update_layout(title="FORCE-TIME ANALYSIS & SUB-PHASES", xaxis_title="Time (s)", yaxis_title="Force (N)", height=420)
     st.plotly_chart(fig_force, use_container_width=True)
