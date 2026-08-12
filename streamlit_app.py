@@ -55,7 +55,35 @@ elif data_mode == "Single JSON (QTM)":
     file_json = st.sidebar.file_uploader("Upload QTM JSON File (.json)", type=["json"])
     if file_json:
         try:
-            dt, t, f_left, f_right, f_total = parse_qtm_json(file_json)
+            plates = parse_qtm_json(file_json)
+            if len(plates) >= 2:
+                st.sidebar.markdown("---")
+                st.sidebar.subheader("Force Plate Mapping")
+                plate_names = [p["name"] for p in plates]
+                
+                if len(plates) == 2:
+                    left_name = st.sidebar.selectbox("Left Limb Plate", plate_names, index=0)
+                    right_names = [n for n in plate_names if n != left_name]
+                    right_name = st.sidebar.selectbox("Right Limb Plate", plate_names, index=1 if len(plate_names) > 1 else 0)
+                    
+                    swap_sides = st.sidebar.toggle("🔀 Swap Left / Right Sides", value=False)
+                    if swap_sides:
+                        left_name, right_name = right_name, left_name
+                else:
+                    left_name = st.sidebar.selectbox("Left Limb Plate", plate_names, index=0)
+                    right_name = st.sidebar.selectbox("Right Limb Plate", plate_names, index=min(1, len(plate_names)-1))
+                
+                p_left = next(p for p in plates if p["name"] == left_name)
+                p_right = next(p for p in plates if p["name"] == right_name)
+                
+                num_frames = min(len(p_left["fz"]), len(p_right["fz"]))
+                dt = p_left["dt"]
+                t = np.arange(num_frames) * dt
+                f_left = p_left["fz"][:num_frames]
+                f_right = p_right["fz"][:num_frames]
+                f_total = f_left + f_right
+            else:
+                st.error("QTM JSON must contain at least 2 Force Plates.")
         except Exception as e:
             st.error(f"Error parsing QTM JSON file: {e}")
 
@@ -90,30 +118,29 @@ if t is not None and f_total is not None and len(f_total) > 0:
     zIdx = min(max(0, int(round((t_split - t[0]) / dt))), n_samples - 1)
     tIdx = min(max(0, int(round((t_takeoff - t[0]) / dt))), n_samples - 1)
     
-    airborne_frames = np.where((np.arange(n_samples) >= tIdx) & (sf < 20.0))[0]
+    airborne_frames = np.where((np.arange(n_samples) >= tIdx) & (sf < 25.0))[0]
     if len(airborne_frames) > 0:
         first_air = airborne_frames[0]
-        non_air = np.where((np.arange(n_samples) > first_air) & (sf >= 20.0))[0]
+        non_air = np.where((np.arange(n_samples) > first_air) & (sf >= 25.0))[0]
         lIdx = non_air[0] if len(non_air) > 0 else n_samples - 1
     else:
         lIdx = n_samples - 1
 
     report = calculate_metrics(t, sf, sl, sr, dt, sIdx, bIdx, zIdx, tIdx, lIdx)
 
-    max_f = np.max(sf)
     fig_force = go.Figure()
-    fig_force.add_trace(go.Scatter(x=t, y=sl, name="Left Limb", line=dict(color='#818cf8', width=2)))
-    fig_force.add_trace(go.Scatter(x=t, y=sr, name="Right Limb", line=dict(color='#f87171', width=2)))
-    fig_force.add_trace(go.Scatter(x=t, y=sf, name="Total Force", line=dict(color='#4d2994', width=3.5)))
+    fig_force.add_trace(go.Scatter(x=t, y=sl, name="Left Limb", line=dict(color='#818cf8', width=0.8)))
+    fig_force.add_trace(go.Scatter(x=t, y=sr, name="Right Limb", line=dict(color='#f87171', width=0.8)))
+    fig_force.add_trace(go.Scatter(x=t, y=sf, name="Total Force", line=dict(color='#4d2994', width=1.2)))
 
     fig_force.add_vrect(x0=t_start, x1=t_braking, fillcolor="yellow", opacity=0.08, line_width=0)
     fig_force.add_vrect(x0=t_braking, x1=t_split, fillcolor="red", opacity=0.08, line_width=0)
     fig_force.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="green", opacity=0.08, line_width=0)
 
-    fig_force.add_vline(x=t_start, line_dash="dot", line_color="#ca8a04")
-    fig_force.add_vline(x=t_braking, line_dash="dot", line_color="#ef4444")
-    fig_force.add_vline(x=t_split, line_dash="dot", line_color="#22c55e")
-    fig_force.add_vline(x=t_takeoff, line_dash="dot", line_color="#dc2626")
+    fig_force.add_vline(x=t_start, line_dash="dot", line_color="#ca8a04", line_width=0.8)
+    fig_force.add_vline(x=t_braking, line_dash="dot", line_color="#ef4444", line_width=0.8)
+    fig_force.add_vline(x=t_split, line_dash="dot", line_color="#22c55e", line_width=0.8)
+    fig_force.add_vline(x=t_takeoff, line_dash="dot", line_color="#dc2626", line_width=0.8)
 
     fig_force.update_layout(title="FORCE-TIME ANALYSIS & SUB-PHASES", xaxis_title="Time (s)", yaxis_title="Force (N)", height=420)
     fig_force.update_xaxes(range=[t[0], t[-1]])
@@ -130,16 +157,16 @@ if t is not None and f_total is not None and len(f_total) > 0:
 
     deficits = np.where(sf >= 50, ((sl - sr) / np.maximum(sl, sr)) * 100, 0)
     fig_deficit = go.Figure()
-    fig_deficit.add_trace(go.Scatter(x=t, y=deficits, name="Asymmetry", fill='tozeroy', fillcolor='rgba(77, 41, 148, 0.15)', line=dict(color='#4d2994', width=2)))
+    fig_deficit.add_trace(go.Scatter(x=t, y=deficits, name="Asymmetry", fill='tozeroy', fillcolor='rgba(77, 41, 148, 0.15)', line=dict(color='#4d2994', width=1.5)))
     
     fig_deficit.add_vrect(x0=t_start, x1=t_braking, fillcolor="yellow", opacity=0.08, line_width=0)
     fig_deficit.add_vrect(x0=t_braking, x1=t_split, fillcolor="red", opacity=0.08, line_width=0)
     fig_deficit.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="green", opacity=0.08, line_width=0)
 
-    fig_deficit.add_vline(x=t_start, line_dash="dot", line_color="#ca8a04")
-    fig_deficit.add_vline(x=t_braking, line_dash="dot", line_color="#ef4444")
-    fig_deficit.add_vline(x=t_split, line_dash="dot", line_color="#22c55e")
-    fig_deficit.add_vline(x=t_takeoff, line_dash="dot", line_color="#dc2626")
+    fig_deficit.add_vline(x=t_start, line_dash="dot", line_color="#ca8a04", line_width=0.8)
+    fig_deficit.add_vline(x=t_braking, line_dash="dot", line_color="#ef4444", line_width=0.8)
+    fig_deficit.add_vline(x=t_split, line_dash="dot", line_color="#22c55e", line_width=0.8)
+    fig_deficit.add_vline(x=t_takeoff, line_dash="dot", line_color="#dc2626", line_width=0.8)
 
     fig_deficit.add_hrect(y0=-threshold_alert, y1=threshold_alert, fillcolor="rgba(34, 197, 94, 0.15)", line_width=0)
     fig_deficit.update_layout(title="L/R ASYMMETRY % (Threshold Alert)", xaxis_title="Time (s)", yaxis_title="Deficit %", yaxis_range=[-55, 55], height=260)
