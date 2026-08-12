@@ -58,111 +58,34 @@ def parse_tsv(uploaded_file):
 
     return freq, np.array(data)
 
-def parse_vald_forcedecks(uploaded_file):
+def parse_vald_forcedecks_exact(uploaded_file):
     """
-    Robust Parser for VALD ForceDecks CSV/TSV Export files.
-    Safely handles column variations to prevent NoneType errors.
+    Exact Parser for VALD ForceDecks Files:
+    - Reads numerical data starting from Row 11 (index 10)
+    - Column A [0] = Time (s)
+    - Column B [1] = Left Force Fz
+    - Column E [4] = Right Force Fz
     """
-    raw_text = uploaded_file.getvalue().decode('utf-8', errors='ignore')
-    lines = raw_text.splitlines()
+    filename = uploaded_file.name.lower()
+    sep = '\t' if filename.endswith('.tsv') else ','
     
-    header_idx = 0
-    for idx, line in enumerate(lines):
-        line_str = line.strip()
-        if not line_str:
-            continue
-        
-        line_lower = line_str.lower()
-        cols = line_str.split('\t') if '\t' in line_str else line_str.split(',')
-        
-        has_time = any(k in line_lower for k in ['time', 'sample', 'sec'])
-        has_force = any(k in line_lower for k in ['force', 'left', 'right', 'fz', 'vgrf'])
-        
-        if len(cols) >= 2 and (has_time or has_force):
-            header_idx = idx
-            break
-
-    data_content = "\n".join(lines[header_idx:])
-    sep = '\t' if '\t' in lines[header_idx] else ','
+    # Read CSV starting from row 11 (skipfirst 10 lines)
+    uploaded_file.seek(0)
+    df = pd.read_csv(uploaded_file, skiprows=10, header=None, sep=sep, on_bad_lines='skip')
     
-    df = pd.read_csv(io.StringIO(data_content), sep=sep, on_bad_lines='skip')
+    # Filter only clean numeric rows
+    df = df.apply(pd.to_numeric, errors='coerce').dropna(how='all')
     
-    col_map = {str(c).strip().lower(): c for c in df.columns}
+    # Extract Time (Col A [0]), Left (Col B [1]), Right (Col E [4])
+    t = df.iloc[:, 0].values.astype(float) if df.shape[1] > 0 else np.arange(len(df)) * 0.001
+    dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
     
-    # 1. Match Time Column
-    time_col = None
-    for k in col_map.keys():
-        if any(x in k for x in ['time', 'sample', 'sec']):
-            time_col = col_map[k]
-            break
-            
-    # 2. Match Left Column
-    left_col = None
-    for k in col_map.keys():
-        if 'left' in k and any(x in k for x in ['force', 'fz', 'vgrf', '(n)', '[n]']):
-            left_col = col_map[k]
-            break
-    if not left_col:
-        for k in col_map.keys():
-            if 'left' in k:
-                left_col = col_map[k]
-                break
-
-    # 3. Match Right Column
-    right_col = None
-    for k in col_map.keys():
-        if 'right' in k and any(x in k for x in ['force', 'fz', 'vgrf', '(n)', '[n]']):
-            right_col = col_map[k]
-            break
-    if not right_col:
-        for k in col_map.keys():
-            if 'right' in k:
-                right_col = col_map[k]
-                break
-
-    # 4. Match Total Force Column
-    total_col = None
-    for k in col_map.keys():
-        if ('total' in k or 'combined' in k or 'vertical' in k) and any(x in k for x in ['force', 'fz', 'vgrf', '(n)', '[n]']):
-            total_col = col_map[k]
-            break
-    if not total_col:
-        for k in col_map.keys():
-            if 'force' in k or 'fz' in k:
-                total_col = col_map[k]
-                break
-
-    # Extract Arrays safely
-    if time_col is not None:
-        t = pd.to_numeric(df[time_col], errors='coerce').fillna(0).values
-        dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
-    else:
-        dt = 0.001
-        t = np.arange(len(df)) * dt
-
-    f_left = pd.to_numeric(df[left_col], errors='coerce').fillna(0).values if left_col else None
-    f_right = pd.to_numeric(df[right_col], errors='coerce').fillna(0).values if right_col else None
-    f_total = pd.to_numeric(df[total_col], errors='coerce').fillna(0).values if total_col else None
-
-    # Handle None assignments safely
-    if f_total is None and f_left is not None and f_right is not None:
-        f_total = f_left + f_right
-    elif f_left is None and f_total is not None and f_right is not None:
-        f_left = np.maximum(0, f_total - f_right)
-    elif f_right is None and f_total is not None and f_left is not None:
-        f_right = np.maximum(0, f_total - f_left)
-    elif f_left is None and f_right is None and f_total is not None:
-        f_left = f_total * 0.5
-        f_right = f_total * 0.5
-    elif f_total is None and f_left is None and f_right is None:
-        # Fallback to numeric columns
-        num_cols = df.select_dtypes(include=[np.number]).columns
-        if len(num_cols) >= 1:
-            f_total = np.abs(df[num_cols[0]].values)
-            f_left = f_total * 0.5
-            f_right = f_total * 0.5
-
-    return dt, t, np.abs(f_left), np.abs(f_right), np.abs(f_total)
+    f_left = np.abs(df.iloc[:, 1].values.astype(float)) if df.shape[1] > 1 else np.zeros(len(df))
+    f_right = np.abs(df.iloc[:, 4].values.astype(float)) if df.shape[1] > 4 else f_left
+    
+    f_total = f_left + f_right
+    
+    return dt, t, f_left, f_right, f_total
 
 def parse_qtm_json(uploaded_file):
     content = json.load(uploaded_file)
@@ -328,7 +251,7 @@ elif data_mode == "VALD ForceDecks (CSV/TSV)":
     file_vald = st.sidebar.file_uploader("Upload VALD ForceDecks File (.csv / .tsv)", type=["csv", "tsv"])
     if file_vald:
         try:
-            dt, t, f_left, f_right, f_total = parse_vald_forcedecks(file_vald)
+            dt, t, f_left, f_right, f_total = parse_vald_forcedecks_exact(file_vald)
         except Exception as e:
             st.error(f"Error parsing VALD ForceDecks file: {e}")
 
@@ -352,7 +275,7 @@ elif data_mode == "Single CSV":
             f_total = f_left + f_right
 
 # --- CORE BIOMECHANICAL ENGINE ---
-if t is not None and f_total is not None:
+if t is not None and f_total is not None and len(f_total) > 0:
     sf = moving_average(f_total, filter_size)
     sl = moving_average(f_left, filter_size)
     sr = moving_average(f_right, filter_size)
@@ -386,7 +309,14 @@ if t is not None and f_total is not None:
             break
 
     peak_force_idx = sIdx_auto + np.argmax(sf[sIdx_auto:tIdx_auto + 1])
-    min_force_idx = sIdx_auto + np.argmin(sf[sIdx_auto:peak_force_idx])
+    
+    # Safe np.argmin check to prevent ValueError
+    unweight_slice = sf[sIdx_auto:peak_force_idx]
+    if len(unweight_slice) > 0:
+        min_force_idx = sIdx_auto + np.argmin(unweight_slice)
+    else:
+        min_force_idx = sIdx_auto
+
     bIdx_auto = min_force_idx
 
     vel_temp = np.cumsum((sf[sIdx_auto:tIdx_auto + 1] - bw) / mass) * dt
