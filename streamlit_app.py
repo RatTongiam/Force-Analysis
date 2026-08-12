@@ -32,7 +32,7 @@ filter_size = st.sidebar.selectbox("Smoothing Filter", [1, 7, 15, 31], index=2)
 threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
 
 # ==============================================================================
-# 1. ROBUST PARSER ENGINES (CORRECTED TSV DT UNPACKING)
+# 1. ROBUST PARSER ENGINES (MANIPULATE EACH FORMAT ACCORDINGLY)
 # ==============================================================================
 
 def parse_tsv(uploaded_file):
@@ -63,6 +63,9 @@ def parse_tsv(uploaded_file):
     return dt, arr
 
 def parse_vald_forcedecks_exact(uploaded_file):
+    """
+    Robust Parser for VALD ForceDecks (Supports 'Time', 'Z Left', 'Z Right' columns).
+    """
     uploaded_file.seek(0)
     raw_text = uploaded_file.getvalue().decode('utf-8', errors='ignore')
     lines = raw_text.splitlines()
@@ -351,8 +354,8 @@ if t is not None and f_total is not None and len(f_total) > 0:
     mass_left = bw_left / g if bw_left > 0 else mass * 0.5
     mass_right = bw_right / g if bw_right > 0 else mass * 0.5
     
-    # Sub-phase Boundaries Detection
-    flight_threshold = 30.0
+    # Robust Sub-phase Boundaries Detection
+    flight_threshold = 20.0
     flight_indices = np.where(sf < flight_threshold)[0]
     tIdx_auto = flight_indices[0] if len(flight_indices) > 0 else n_samples - 1
     tIdx_auto = min(tIdx_auto, n_samples - 1)
