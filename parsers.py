@@ -1,199 +1,156 @@
-import streamlit as st
-import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
+import numpy as np
+import json
+import io
+import re
 
-from parsers import parse_tsv, parse_vald_forcedecks_exact, parse_qtm_json, parse_single_csv_cforce
-from biomechanics import moving_average, detect_phases_sequential, calculate_metrics
-from pdf_generator import generate_pdf_report
+def parse_tsv(uploaded_file):
+    lines = uploaded_file.getvalue().decode('utf-8', errors='ignore').splitlines()
+    freq = 2000.0
+    data = []
+    for line in lines:
+        line_str = line.strip()
+        if not line_str:
+            continue
+        if line_str.startswith("FREQUENCY"):
+            parts = line_str.split('\t')
+            if len(parts) > 1:
+                try:
+                    freq = float(parts[1])
+                except ValueError:
+                    pass
+            continue
+        parts = line_str.split('\t')
+        if len(parts) >= 3 and not line_str.startswith("FORCE_PLATE"):
+            try:
+                vals = [float(p) for p in parts]
+                data.append(vals)
+            except ValueError:
+                pass
+    dt = 1.0 / freq
+    arr = np.array(data)
+    return dt, arr
 
-st.set_page_config(layout="wide", page_title="Free JumpAnz Team - Prima Motion Tech")
-
-st.title("Free JumpAnz Team - Biomechanics Analysis")
-st.caption("PRIMA MOTION TECHNOLOGY — Technology that unlocks scientific insight")
-
-st.sidebar.header("Data Import & Settings")
-
-data_mode = st.sidebar.radio("Select Input Mode", [
-    "Dual TSV (Plate A + B)", 
-    "VALD ForceDecks (CSV/TSV)", 
-    "Single JSON (QTM)", 
-    "Single CSV (C-Force)"
-])
-
-filter_size = st.sidebar.selectbox("Smoothing Filter", [1, 7, 15, 31], index=2)
-threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
-
-dt, t, f_left, f_right, f_total = None, None, None, None, None
-
-if data_mode == "Dual TSV (Plate A + B)":
-    file_a = st.sidebar.file_uploader("Upload Plate File A (.tsv)", type=["tsv"])
-    side_a = st.sidebar.selectbox("Assign Side File A", ["left", "right"], index=0)
-    file_b = st.sidebar.file_uploader("Upload Plate File B (.tsv)", type=["tsv"])
-    side_b = st.sidebar.selectbox("Assign Side File B", ["left", "right"], index=1)
+def parse_vald_forcedecks_exact(uploaded_file):
+    uploaded_file.seek(0)
+    raw_text = uploaded_file.getvalue().decode('utf-8', errors='ignore')
+    lines = raw_text.splitlines()
     
-    if file_a and file_b:
-        dt, data_a = parse_tsv(file_a)
-        _, data_b = parse_tsv(file_b)
-        num_frames = min(len(data_a), len(data_b))
-        t = np.arange(num_frames) * dt
-        fz_a = np.abs(data_a[:num_frames, 2])
-        fz_b = np.abs(data_b[:num_frames, 2])
-        f_left = fz_a if side_a == "left" else fz_b
-        f_right = fz_b if side_a == "left" else fz_a
+    header_idx = 0
+    is_new_format = False
+    for idx, line in enumerate(lines[:30]):
+        if 'Time' in line and 'Z Left' in line:
+            header_idx = idx
+            is_new_format = True
+            break
+            
+    if is_new_format:
+        data_content = "\n".join(lines[header_idx:])
+        df = pd.read_csv(io.StringIO(data_content))
+        df.columns = [c.strip() for c in df.columns]
+        
+        t = df['Time'].values.astype(float)
+        dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
+        
+        f_left = np.abs(df['Z Left'].values.astype(float))
+        f_right = np.abs(df['Z Right'].values.astype(float))
         f_total = f_left + f_right
-
-elif data_mode == "VALD ForceDecks (CSV/TSV)":
-    file_vald = st.sidebar.file_uploader("Upload VALD ForceDecks File (.csv / .tsv)", type=["csv", "tsv"])
-    if file_vald:
-        try:
-            dt, t, f_left, f_right, f_total = parse_vald_forcedecks_exact(file_vald)
-        except Exception as e:
-            st.error(f"Error parsing VALD ForceDecks file: {e}")
-
-elif data_mode == "Single JSON (QTM)":
-    file_json = st.sidebar.file_uploader("Upload QTM JSON File (.json)", type=["json"])
-    if file_json:
-        try:
-            plates = parse_qtm_json(file_json)
-            if len(plates) >= 2:
-                st.sidebar.markdown("---")
-                st.sidebar.subheader("Force Plate Mapping")
-                plate_names = [p["name"] for p in plates]
-                
-                if len(plates) == 2:
-                    left_name = st.sidebar.selectbox("Left Limb Plate", plate_names, index=0)
-                    right_names = [n for n in plate_names if n != left_name]
-                    right_name = st.sidebar.selectbox("Right Limb Plate", plate_names, index=1 if len(plate_names) > 1 else 0)
-                    
-                    swap_sides = st.sidebar.toggle("🔀 Swap Left / Right Sides", value=False)
-                    if swap_sides:
-                        left_name, right_name = right_name, left_name
-                else:
-                    left_name = st.sidebar.selectbox("Left Limb Plate", plate_names, index=0)
-                    right_name = st.sidebar.selectbox("Right Limb Plate", plate_names, index=min(1, len(plate_names)-1))
-                
-                p_left = next(p for p in plates if p["name"] == left_name)
-                p_right = next(p for p in plates if p["name"] == right_name)
-                
-                num_frames = min(len(p_left["fz"]), len(p_right["fz"]))
-                dt = p_left["dt"]
-                t = np.arange(num_frames) * dt
-                f_left = p_left["fz"][:num_frames]
-                f_right = p_right["fz"][:num_frames]
-                f_total = f_left + f_right
-            else:
-                st.error("QTM JSON must contain at least 2 Force Plates.")
-        except Exception as e:
-            st.error(f"Error parsing QTM JSON file: {e}")
-
-elif data_mode == "Single CSV (C-Force)":
-    file_csv = st.sidebar.file_uploader("Upload Single CSV File (.csv)", type=["csv"])
-    if file_csv:
-        try:
-            dt, t, f_left, f_right, f_total = parse_single_csv_cforce(file_csv)
-        except Exception as e:
-            st.error(f"Error parsing Single CSV file: {e}")
-
-if t is not None and f_total is not None and len(f_total) > 0:
-    sf = moving_average(f_total, filter_size)
-    sl = moving_average(f_left, filter_size)
-    sr = moving_average(f_right, filter_size)
-    
-    n_samples = len(sf)
-    quiet_samples = max(1, min(int(0.5 / dt), n_samples))
-
-    sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto = detect_phases_sequential(t, sf, dt, quiet_samples)
-
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Phase Adjustment")
-    
-    t_start = st.sidebar.slider("Start (Unweighting Onset)", float(t[0]), float(t[-1]), float(t[sIdx_auto]), step=0.005)
-    t_braking = st.sidebar.slider("Braking Onset (Min Force)", float(t[0]), float(t[-1]), float(t[bIdx_auto]), step=0.005)
-    t_split = st.sidebar.slider("Propulsive Onset (V=0)", float(t[0]), float(t[-1]), float(t[zIdx_auto]), step=0.005)
-    t_takeoff = st.sidebar.slider("Take-off", float(t[0]), float(t[-1]), float(t[tIdx_auto]), step=0.005)
-
-    sIdx = min(max(0, int(round((t_start - t[0]) / dt))), n_samples - 1)
-    bIdx = min(max(0, int(round((t_braking - t[0]) / dt))), n_samples - 1)
-    zIdx = min(max(0, int(round((t_split - t[0]) / dt))), n_samples - 1)
-    tIdx = min(max(0, int(round((t_takeoff - t[0]) / dt))), n_samples - 1)
-    
-    airborne_frames = np.where((np.arange(n_samples) >= tIdx) & (sf < 25.0))[0]
-    if len(airborne_frames) > 0:
-        first_air = airborne_frames[0]
-        non_air = np.where((np.arange(n_samples) > first_air) & (sf >= 25.0))[0]
-        lIdx = non_air[0] if len(non_air) > 0 else n_samples - 1
+        return dt, t, f_left, f_right, f_total
     else:
-        lIdx = n_samples - 1
+        filename = uploaded_file.name.lower()
+        sep = '\t' if filename.endswith('.tsv') else ','
+        df = pd.read_csv(io.StringIO(raw_text), skiprows=10, header=None, sep=sep, on_bad_lines='skip')
+        df = df.apply(pd.to_numeric, errors='coerce').dropna(how='all')
+        
+        t = df.iloc[:, 0].values.astype(float) if df.shape[1] > 0 else np.arange(len(df)) * 0.001
+        dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
+        
+        f_left = np.abs(df.iloc[:, 1].values.astype(float)) if df.shape[1] > 1 else np.zeros(len(df))
+        f_right = np.abs(df.iloc[:, 4].values.astype(float)) if df.shape[1] > 4 else f_left
+        f_total = f_left + f_right
+        return dt, t, f_left, f_right, f_total
 
-    report = calculate_metrics(t, sf, sl, sr, dt, sIdx, bIdx, zIdx, tIdx, lIdx)
-
-    fig_force = go.Figure()
-    fig_force.add_trace(go.Scatter(x=t, y=sl, name="Left Limb", line=dict(color='#818cf8', width=0.8)))
-    fig_force.add_trace(go.Scatter(x=t, y=sr, name="Right Limb", line=dict(color='#f87171', width=0.8)))
-    fig_force.add_trace(go.Scatter(x=t, y=sf, name="Total Force", line=dict(color='#4d2994', width=1.2)))
-
-    fig_force.add_vrect(x0=t_start, x1=t_braking, fillcolor="yellow", opacity=0.08, line_width=0)
-    fig_force.add_vrect(x0=t_braking, x1=t_split, fillcolor="red", opacity=0.08, line_width=0)
-    fig_force.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="green", opacity=0.08, line_width=0)
-
-    fig_force.add_vline(x=t_start, line_dash="dot", line_color="#ca8a04", line_width=0.8)
-    fig_force.add_vline(x=t_braking, line_dash="dot", line_color="#ef4444", line_width=0.8)
-    fig_force.add_vline(x=t_split, line_dash="dot", line_color="#22c55e", line_width=0.8)
-    fig_force.add_vline(x=t_takeoff, line_dash="dot", line_color="#dc2626", line_width=0.8)
-
-    fig_force.update_layout(title="FORCE-TIME ANALYSIS & SUB-PHASES", xaxis_title="Time (s)", yaxis_title="Force (N)", height=420)
-    fig_force.update_xaxes(range=[t[0], t[-1]])
-    st.plotly_chart(fig_force, use_container_width=True)
-
-    pdf_bytes = generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff)
-    st.sidebar.markdown("---")
-    st.sidebar.download_button(
-        label="📥 Download A4 PDF Report",
-        data=pdf_bytes,
-        file_name="Prima_Motion_CMJ_Report.pdf",
-        mime="application/pdf"
-    )
-
-    deficits = np.where(sf >= 50, ((sl - sr) / np.maximum(sl, sr)) * 100, 0)
-    fig_deficit = go.Figure()
-    fig_deficit.add_trace(go.Scatter(x=t, y=deficits, name="Asymmetry", fill='tozeroy', fillcolor='rgba(77, 41, 148, 0.15)', line=dict(color='#4d2994', width=1.5)))
+def parse_qtm_json(uploaded_file):
+    uploaded_file.seek(0)
+    content = json.load(uploaded_file)
+    root = content[0] if isinstance(content, list) else content
+    plates = root.get("ForcePlates", [])
     
-    fig_deficit.add_vrect(x0=t_start, x1=t_braking, fillcolor="yellow", opacity=0.08, line_width=0)
-    fig_deficit.add_vrect(x0=t_braking, x1=t_split, fillcolor="red", opacity=0.08, line_width=0)
-    fig_deficit.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="green", opacity=0.08, line_width=0)
+    if len(plates) == 0:
+        return []
+        
+    plate_data = []
+    for idx, plate in enumerate(plates):
+        parts = plate.get("Parts", [])
+        if len(parts) > 0 and len(parts[0].get("Values", [])) > 0:
+            vals = np.array(parts[0]["Values"])
+            if vals.shape[1] >= 9:
+                col_means = [np.mean(np.abs(vals[:, c])) for c in [2, 5, 8] if c < vals.shape[1]]
+                best_col = [2, 5, 8][np.argmax(col_means)] if col_means else 2
+                fz = np.abs(vals[:, best_col])
+                
+                range_info = parts[0].get("Range", {})
+                n_start = range_info.get("Start", 1)
+                n_end = range_info.get("End", len(fz))
+                total_frames = max(1, n_end - n_start + 1)
+                
+                timestamps = vals[:, 0] if vals.shape[1] > 0 else np.arange(total_frames)
+                if len(timestamps) > 1 and (timestamps[1] - timestamps[0]) > 0:
+                    dt = float(timestamps[1] - timestamps[0])
+                else:
+                    cam_freq = root.get("Timebase", {}).get("Frequency", 120.0)
+                    duration = total_frames / 2000.0 if total_frames > 5000 else total_frames / cam_freq
+                    dt = duration / total_frames if total_frames > 0 else 1.0 / 2000.0
+                
+                plate_data.append({
+                    "id": idx,
+                    "name": plate.get("Name", f"Force-plate {idx+1}"),
+                    "fz": fz,
+                    "dt": dt
+                })
+                
+    return plate_data
 
-    fig_deficit.add_vline(x=t_start, line_dash="dot", line_color="#ca8a04", line_width=0.8)
-    fig_deficit.add_vline(x=t_braking, line_dash="dot", line_color="#ef4444", line_width=0.8)
-    fig_deficit.add_vline(x=t_split, line_dash="dot", line_color="#22c55e", line_width=0.8)
-    fig_deficit.add_vline(x=t_takeoff, line_dash="dot", line_color="#dc2626", line_width=0.8)
-
-    fig_deficit.add_hrect(y0=-threshold_alert, y1=threshold_alert, fillcolor="rgba(34, 197, 94, 0.15)", line_width=0)
-    fig_deficit.update_layout(title="L/R ASYMMETRY % (Threshold Alert)", xaxis_title="Time (s)", yaxis_title="Deficit %", yaxis_range=[-55, 55], height=260)
-    fig_deficit.update_xaxes(range=[t[0], t[-1]])
-    st.plotly_chart(fig_deficit, use_container_width=True)
-
-    st.markdown("### Standard Biomechanical Analysis Report (Anicic et al., 2023)")
-    table_rows = []
-    for phase_name, metrics in report.items():
-        table_rows.append({"Biomechanical Metric": f"=== {phase_name.upper()} ===", "Left": "", "Right": "", "TOTAL": "", "Deficit %": ""})
-        for metric_name, vals in metrics.items():
-            table_rows.append({
-                "Biomechanical Metric": metric_name,
-                "Left": vals["Left"],
-                "Right": vals["Right"],
-                "TOTAL": vals["Total"],
-                "Deficit %": vals["Deficit"]
-            })
+def parse_single_csv_cforce(uploaded_file):
+    uploaded_file.seek(0)
+    lines = uploaded_file.getvalue().decode('utf-8', errors='ignore').splitlines()
     
-    st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
+    data = []
+    for line in lines[1:]:
+        line_str = line.strip()
+        if not line_str:
+            continue
+        parts = line_str.split(',')
+        if len(parts) >= 4:
+            try:
+                t_val = float(parts[0].strip())
+                
+                def clean_val(val_str):
+                    val_str = val_str.strip()
+                    match = re.findall(r'-?\d+\.?\d*', val_str)
+                    if len(match) == 1:
+                        return float(match[0])
+                    elif len(match) > 1:
+                        return float("".join(match[1:])) if len(val_str.split()) > 1 else float(match[0])
+                    return 0.0
 
-    st.download_button(
-        label="📥 Download A4 PDF Report",
-        data=pdf_bytes,
-        file_name="Prima_Motion_CMJ_Report.pdf",
-        mime="application/pdf",
-        key="main_download_btn"
-    )
-else:
-    st.info("Please upload data file(s) to begin analysis.")
+                f_val = clean_val(parts[1])
+                l_val = clean_val(parts[2])
+                r_val = clean_val(parts[3])
+                
+                data.append([t_val, f_val, l_val, r_val])
+            except Exception:
+                pass
+                
+    if len(data) == 0:
+        return 0.001, np.array([]), np.array([]), np.array([]), np.array([])
+        
+    df = pd.DataFrame(data, columns=['time', 'force', 'left', 'right'])
+    t = df['time'].values.astype(float)
+    dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
+    
+    f_total = np.abs(df['force'].values.astype(float))
+    f_left = np.abs(df['left'].values.astype(float))
+    f_right = np.abs(df['right'].values.astype(float))
+    
+    return dt, t, f_left, f_right, f_total
