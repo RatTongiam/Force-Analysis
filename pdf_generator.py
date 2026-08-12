@@ -23,19 +23,20 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
         Spacer(1, 8)
     ]
 
-    fig_plt, ax = plt.subplots(figsize=(8, 3.0), dpi=200)
-    ax.plot(t, sl, label='Left Limb', color='#818cf8', linewidth=1.5)
-    ax.plot(t, sr, label='Right Limb', color='#f87171', linewidth=1.5)
-    ax.plot(t, sf, label='Total Force', color='#4d2994', linewidth=2.5)
+    # --- PLOT WITH THINNER LINES FOR BETTER READABILITY ---
+    fig_plt, ax = plt.subplots(figsize=(8, 2.8), dpi=200)
+    ax.plot(t, sl, label='Left Limb', color='#818cf8', linewidth=0.8)
+    ax.plot(t, sr, label='Right Limb', color='#f87171', linewidth=0.8)
+    ax.plot(t, sf, label='Total Force', color='#4d2994', linewidth=1.2)
 
     ax.axvspan(t_start, t_braking, color='yellow', alpha=0.15)
     ax.axvspan(t_braking, t_split, color='red', alpha=0.15)
     ax.axvspan(t_split, t_takeoff, color='green', alpha=0.15)
 
-    ax.axvline(t_start, color='#ca8a04', linestyle='--', linewidth=1)
-    ax.axvline(t_braking, color='#ef4444', linestyle='--', linewidth=1)
-    ax.axvline(t_split, color='#22c55e', linestyle='--', linewidth=1)
-    ax.axvline(t_takeoff, color='#dc2626', linestyle='--', linewidth=1)
+    ax.axvline(t_start, color='#ca8a04', linestyle='--', linewidth=0.8)
+    ax.axvline(t_braking, color='#ef4444', linestyle='--', linewidth=0.8)
+    ax.axvline(t_split, color='#22c55e', linestyle='--', linewidth=0.8)
+    ax.axvline(t_takeoff, color='#dc2626', linestyle='--', linewidth=0.8)
 
     ax.set_title("FORCE-TIME ANALYSIS & SUB-PHASES", fontsize=9, fontweight='bold', color='#1a0f30')
     ax.set_xlabel("Time (s)", fontsize=8)
@@ -49,8 +50,8 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
     plt.close(fig_plt)
     img_buffer.seek(0)
 
-    story.append(Image(img_buffer, width=520, height=195))
-    story.append(Spacer(1, 8))
+    story.append(Image(img_buffer, width=520, height=182))
+    story.append(Spacer(1, 6))
     
     table_data = [[
         Paragraph("<b>Biomechanical Metric</b>", cell_bold), 
@@ -83,8 +84,8 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
             
     t_styles_list = [
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f8f6fb')),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 1.5),
-        ('TOPPADDING', (0, 0), (-1, -1), 1.5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 1.2),
+        ('TOPPADDING', (0, 0), (-1, -1), 1.2),
         ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e5e7eb')),
     ]
