@@ -32,7 +32,7 @@ filter_size = st.sidebar.selectbox("Smoothing Filter", [1, 7, 15, 31], index=2)
 threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
 
 # ==============================================================================
-# 1. ROBUST PARSER ENGINES
+# 1. ROBUST PARSER ENGINES (PRESERVE ORIGINAL ABSOLUTE TIMESTAMPS)
 # ==============================================================================
 
 def parse_tsv(uploaded_file):
@@ -81,8 +81,6 @@ def parse_vald_forcedecks_exact(uploaded_file):
         df.columns = [c.strip() for c in df.columns]
         
         t = df['Time'].values.astype(float)
-        if len(t) > 0 and t[0] > 10.0:
-            t = t - t[0]
         dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
         
         f_left = np.abs(df['Z Left'].values.astype(float))
@@ -96,8 +94,6 @@ def parse_vald_forcedecks_exact(uploaded_file):
         df = df.apply(pd.to_numeric, errors='coerce').dropna(how='all')
         
         t = df.iloc[:, 0].values.astype(float) if df.shape[1] > 0 else np.arange(len(df)) * 0.001
-        if len(t) > 0 and t[0] > 10.0:
-            t = t - t[0]
         dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
         
         f_left = np.abs(df.iloc[:, 1].values.astype(float)) if df.shape[1] > 1 else np.zeros(len(df))
@@ -144,8 +140,6 @@ def parse_single_csv_cforce(uploaded_file):
     right_col = next((c for c in df.columns if 'right' in c), df.columns[3] if len(df.columns) > 3 else None)
     
     t = pd.to_numeric(df[time_col], errors='coerce').fillna(0).values
-    if len(t) > 0 and t[0] > 10.0:
-        t = t - t[0]
     dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
     
     f_total = np.abs(pd.to_numeric(df[total_col], errors='coerce').fillna(0).values) if total_col else np.zeros(len(df))
@@ -329,7 +323,7 @@ elif data_mode == "Single CSV (C-Force)":
             st.error(f"Error parsing Single CSV file: {e}")
 
 # ==============================================================================
-# 5. CORE ANALYSIS & REPORT RENDERING (24 RELIABLE METRICS)
+# 5. CORE ANALYSIS & REPORT RENDERING (SEQUENTIAL FORWARD ENGINE)
 # ==============================================================================
 
 if t is not None and f_total is not None and len(f_total) > 0:
@@ -351,48 +345,42 @@ if t is not None and f_total is not None and len(f_total) > 0:
     mass_left = bw_left / g if bw_left > 0 else mass * 0.5
     mass_right = bw_right / g if bw_right > 0 else mass * 0.5
     
-    # --- FOOLPROOF SUB-PHASE BOUNDARIES DETECTION ---
-    # 1. Find the true main jump peak force
-    peak_overall_idx = np.argmax(sf)
-    flight_threshold = 15.0
-    
-    # 2. Find flight phase (force < 15N) strictly AFTER the peak force
-    flight_candidates = np.where((t > t[peak_overall_idx]) & (sf < flight_threshold))[0]
-    
-    if len(flight_candidates) > 5:
-        # Group contiguous flight frames to find the true airborne segment
-        splits = np.where(np.diff(flight_candidates) > 1)[0]
-        segments = np.split(flight_candidates, splits + 1)
-        longest_seg = max(segments, key=len)
-        tIdx_auto = longest_seg[0]  # Take-off frame (onset of flight)
-        lIdx_auto = min(n_samples - 1, longest_seg[-1] + int(0.01 / dt)) # Landing frame
+    # --- SEQUENTIAL FORWARD ALGORITHM ---
+    # 1. Unweighting Onset (sIdx): First point where force drops below BW - 3*SD
+    unweight_cands = np.where(sf < bw - 3 * force_sd)[0]
+    sIdx_auto = unweight_cands[0] if len(unweight_cands) > 0 else int(quiet_samples)
+
+    # 2. Braking Onset (bIdx): Local minimum of force after unweighting onset, before main propulsion peak
+    search_end_b = sIdx_auto + int(1.2 / dt)
+    search_end_b = min(search_end_b, n_samples)
+    if search_end_b > sIdx_auto:
+        bIdx_auto = sIdx_auto + np.argmin(sf[sIdx_auto:search_end_b])
     else:
-        # Fallback if no clean flight segment found
-        tIdx_auto = int(n_samples * 0.6)
-        lIdx_auto = int(n_samples * 0.7)
+        bIdx_auto = sIdx_auto
+
+    # 3. Propulsive Onset (zIdx): Where integrated velocity crosses 0 after braking min
+    vel_temp = np.cumsum((sf[sIdx_auto:] - bw) / mass) * dt
+    b_rel = max(0, bIdx_auto - sIdx_auto)
+    zero_crossings = np.where(vel_temp[b_rel:] >= 0)[0]
+    zIdx_auto = (bIdx_auto + zero_crossings[0]) if len(zero_crossings) > 0 else bIdx_auto
+
+    # 4. Take-off (tIdx): Where force drops below flight threshold (< 15N) strictly after propulsive onset
+    flight_threshold = 15.0
+    flight_cands = np.where((np.arange(n_samples) > zIdx_auto) & (sf < flight_threshold))[0]
+    if len(flight_cands) > 0:
+        # Find contiguous segment of flight
+        tIdx_auto = flight_cands[0]
+        l_cands = np.where((np.arange(n_samples) > tIdx_auto + int(0.05 / dt)) & (sf >= flight_threshold))[0]
+        lIdx_auto = l_cands[0] if len(l_cands) > 0 else n_samples - 1
+    else:
+        tIdx_auto = min(n_samples - 1, zIdx_auto + int(0.3 / dt))
+        lIdx_auto = min(n_samples - 1, tIdx_auto + int(0.1 / dt))
 
     tIdx_auto = min(tIdx_auto, n_samples - 1)
     lIdx_auto = min(lIdx_auto, n_samples - 1)
-
-    # 3. Find Braking Onset (Minimum force between start and takeoff peak)
-    search_start = max(0, int(quiet_samples))
-    search_end = min(tIdx_auto, int(peak_overall_idx))
-    if search_end > search_start:
-        min_force_rel_idx = np.argmin(sf[search_start:search_end])
-        bIdx_auto = search_start + min_force_rel_idx
-    else:
-        bIdx_auto = max(0, tIdx_auto - int(0.3 / dt))
-
-    # 4. Find Unweighting Onset (Where force first drops below 98% of Bodyweight before braking)
-    drop_candidates = np.where((t < t[bIdx_auto]) & (sf < bw * 0.98))[0]
-    sIdx_auto = drop_candidates[0] if len(drop_candidates) > 0 else max(0, bIdx_auto - int(0.4 / dt))
-
-    # 5. Find Propulsive Onset (V = 0 crossing between braking min and takeoff)
-    vel_temp = np.cumsum((sf[sIdx_auto:tIdx_auto + 1] - bw) / mass) * dt
-    b_rel = max(0, bIdx_auto - sIdx_auto)
-    zero_vel_matches = np.where(vel_temp[b_rel:] >= 0)[0]
-    zIdx_auto = (bIdx_auto + zero_vel_matches[0]) if len(zero_vel_matches) > 0 else bIdx_auto
-    zIdx_auto = min(zIdx_auto, n_samples - 1)
+    zIdx_auto = min(zIdx_auto, tIdx_auto)
+    bIdx_auto = min(bIdx_auto, zIdx_auto)
+    sIdx_auto = min(sIdx_auto, bIdx_auto)
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("Phase Adjustment")
@@ -408,8 +396,8 @@ if t is not None and f_total is not None and len(f_total) > 0:
     zIdx = min(max(0, int(round(t_split / dt))), n_samples - 1)
     tIdx = min(max(0, int(round(t_takeoff / dt))), n_samples - 1)
     
-    lIdx_matches = np.where((t > t[tIdx] + 0.05) & (sf >= flight_threshold))[0]
-    lIdx = lIdx_matches[0] if len(lIdx_matches) > 0 else n_samples - 1
+    l_matches = np.where((t > t[tIdx] + 0.05) & (sf >= flight_threshold))[0]
+    lIdx = l_matches[0] if len(l_matches) > 0 else n_samples - 1
     lIdx = min(lIdx, n_samples - 1)
 
     # Integration
@@ -550,7 +538,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
 
     fig_force.add_annotation(x=t_start + (t_braking - t_start)/2, y=max_f * 1.05, text="UNWEIGHTING", showarrow=False, font=dict(color='#ca8a04', size=10))
     fig_force.add_annotation(x=t_braking + (t_split - t_braking)/2, y=max_f * 1.18, text="BRAKING", showarrow=False, font=dict(color='#ef4444', size=10))
-    fig_force.add_annotation(x=t_split + (t_takeoff - t_split)/2, y=max_f * 1.05, text="PROPULSIVE", showarrow=False, font=dict(color='#4d2994', size=10))
+    fig_force.add_annotation(x=t_split + (t_takeoff - t_split)/2, y=max_f * 1.05, text="PROPULSIVE", showarrow=False, font=dict(color='#22c55e', size=10))
 
     fig_force.update_layout(title="FORCE-TIME ANALYSIS & SUB-PHASES", xaxis_title="Time (s)", yaxis_title="Force (N)", height=420)
     st.plotly_chart(fig_force, use_container_width=True)
