@@ -59,12 +59,17 @@ def parse_tsv(uploaded_file):
     return freq, np.array(data)
 
 def parse_vald_forcedecks_exact(uploaded_file):
+    """
+    VALD ForceDecks Parser with Flight Phase Zero-Offset Calibration.
+    - Reads numerical data starting from Row 11 (skiprows=10)
+    - Col A [0] = Time (s), Col B [1] = Left Force Fz, Col E [4] = Right Force Fz
+    - Subtracts residual force offset during flight phase to secure true 0N floor.
+    """
     filename = uploaded_file.name.lower()
     sep = '\t' if filename.endswith('.tsv') else ','
     
     uploaded_file.seek(0)
     df = pd.read_csv(uploaded_file, skiprows=10, header=None, sep=sep, on_bad_lines='skip')
-    
     df = df.apply(pd.to_numeric, errors='coerce').dropna(how='all')
     
     t = df.iloc[:, 0].values.astype(float) if df.shape[1] > 0 else np.arange(len(df)) * 0.001
@@ -72,12 +77,37 @@ def parse_vald_forcedecks_exact(uploaded_file):
     
     f_left = np.abs(df.iloc[:, 1].values.astype(float)) if df.shape[1] > 1 else np.zeros(len(df))
     f_right = np.abs(df.iloc[:, 4].values.astype(float)) if df.shape[1] > 4 else f_left
-    
     f_total = f_left + f_right
-    
+
+    # --- FLIGHT PHASE ZERO-OFFSET CALIBRATION ---
+    # Find minimum force window after peak force to extract sensor residual offset
+    if len(f_total) > 200:
+        quiet_samples = max(1, int(0.5 / dt))
+        peak_idx = quiet_samples + np.argmax(f_total[quiet_samples:])
+        
+        if peak_idx + 50 < len(f_total):
+            flight_search_window = f_total[peak_idx:]
+            min_flight_idx = peak_idx + np.argmin(flight_search_window)
+            
+            win_start = max(0, min_flight_idx - int(0.025 / dt))
+            win_end = min(len(f_total), min_flight_idx + int(0.025 / dt))
+            
+            offset_l = np.mean(f_left[win_start:win_end])
+            offset_r = np.mean(f_right[win_start:win_end])
+            
+            # Subtract offset if residual force is above noise floor (> 2N)
+            if offset_l > 2.0:
+                f_left = np.maximum(0.0, f_left - offset_l)
+            if offset_r > 2.0:
+                f_right = np.maximum(0.0, f_right - offset_r)
+            f_total = f_left + f_right
+
     return dt, t, f_left, f_right, f_total
 
 def parse_qtm_json(uploaded_file):
+    """
+    QTM JSON Parser with Force Unit Conversion (mN to N).
+    """
     content = json.load(uploaded_file)
     root = content[0] if isinstance(content, list) else content
     
@@ -101,7 +131,12 @@ def parse_qtm_json(uploaded_file):
         f_right = np.abs(vals[:num_frames, 2]) * 0.5
         
     t = np.arange(num_frames) * dt
+    
+    # --- CONVERT QTM FORCES FROM mN TO N ---
+    f_left = f_left / 1000.0
+    f_right = f_right / 1000.0
     f_total = f_left + f_right
+    
     return dt, t, f_left, f_right, f_total
 
 def moving_average(arr, window):
@@ -117,6 +152,18 @@ def calc_impulse(arr, dt):
 
 def calc_net_impulse(arr, base, dt):
     return np.sum(arr - base) * dt
+
+def calc_deficit_str(val_l, val_r):
+    try:
+        vl = float(val_l)
+        vr = float(val_r)
+        max_val = max(abs(vl), abs(vr))
+        if max_val == 0:
+            return "-"
+        diff_pct = ((vl - vr) / max_val) * 100.0
+        return f"{diff_pct:+.1f}%"
+    except (ValueError, TypeError):
+        return "-"
 
 # --- PDF GENERATION ENGINE ---
 def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, bw):
@@ -175,20 +222,22 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
         Paragraph("<b>Biomechanical Metric</b>", cell_bold), 
         Paragraph("<b>Left</b>", cell_bold), 
         Paragraph("<b>Right</b>", cell_bold), 
-        Paragraph("<b>TOTAL</b>", cell_bold)
+        Paragraph("<b>TOTAL</b>", cell_bold),
+        Paragraph("<b>Deficit %</b>", cell_bold)
     ]]
     
     for phase_name, metrics in report_data.items():
         table_data.append([
             Paragraph(f"<b>{phase_name.upper()}</b>", ParagraphStyle('PhaseHeader', parent=cell_bold, textColor=colors.HexColor('#4d2994'))),
-            "", "", ""
+            "", "", "", ""
         ])
         for m_name, vals in metrics.items():
             table_data.append([
                 Paragraph(m_name, cell_style),
                 Paragraph(str(vals["Left"]), cell_style),
                 Paragraph(str(vals["Right"]), cell_style),
-                Paragraph(f"<b>{vals['Total']}</b>", cell_bold)
+                Paragraph(f"<b>{vals['Total']}</b>", cell_bold),
+                Paragraph(str(vals["Deficit"]), cell_style)
             ])
             
     t_style = TableStyle([
@@ -197,17 +246,17 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
         ('TOPPADDING', (0, 0), (-1, 0), 3),
         ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e5e7eb')),
-        ('SPAN', (0, 1), (3, 1)),
-        ('SPAN', (0, 11), (3, 11)),
-        ('SPAN', (0, 18), (3, 18)),
-        ('SPAN', (0, 25), (3, 25)),
+        ('SPAN', (0, 1), (4, 1)),
+        ('SPAN', (0, 11), (4, 11)),
+        ('SPAN', (0, 18), (4, 18)),
+        ('SPAN', (0, 25), (4, 25)),
         ('BACKGROUND', (0, 1), (-1, 1), colors.HexColor('#f1ebf9')),
         ('BACKGROUND', (0, 11), (-1, 11), colors.HexColor('#f1ebf9')),
         ('BACKGROUND', (0, 18), (-1, 18), colors.HexColor('#f1ebf9')),
         ('BACKGROUND', (0, 25), (-1, 25), colors.HexColor('#f1ebf9')),
     ])
     
-    doc_table = Table(table_data, colWidths=[240, 90, 90, 100])
+    doc_table = Table(table_data, colWidths=[200, 75, 75, 85, 85])
     doc_table.setStyle(t_style)
     story.append(doc_table)
     
@@ -325,7 +374,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
     t_split = st.sidebar.slider("Propulsive Onset (V=0)", 0.0, float(t[-1]), float(t[zIdx_auto]), step=0.005)
     t_takeoff = st.sidebar.slider("Take-off", 0.0, float(t[-1]), float(t[tIdx_auto]), step=0.005)
 
-    # Safe Boundary Array Index Bounding
     sIdx = min(max(0, int(round(t_start / dt))), n_samples - 1)
     bIdx = min(max(0, int(round(t_braking / dt))), n_samples - 1)
     zIdx = min(max(0, int(round(t_split / dt))), n_samples - 1)
@@ -342,7 +390,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
 
     cV = cVL = cVR = cD = 0.0
 
-    # Safe Integration Loop
     for i in range(sIdx, min(tIdx + 1, n_samples)):
         cV += ((sf[i] - bw) / mass) * dt
         cVL += ((sl[i] - bw_left) / mass_left) * dt
@@ -422,36 +469,36 @@ if t is not None and f_total is not None and len(f_total) > 0:
 
     report = {
         "1. Performance Component (59% Variance)": {
-            "Jump Height - Flight Time (cm)": {"Left": "-", "Right": "-", "Total": f"{jh_flight:.1f}"},
-            "Jump Height - Impulse-Momentum (cm)": {"Left": "-", "Right": "-", "Total": f"{jh_impulse:.1f}"},
-            "Flight Phase Duration (s)": {"Left": "-", "Right": "-", "Total": f"{flight_dur:.2f}"},
-            "Take-off Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{v_takeoff:.2f}"},
-            "Peak Propulsive Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{peak_v_prop:.2f}"},
-            "RSI Modified (AU)": {"Left": "-", "Right": "-", "Total": f"{rsi_modified:.2f}"},
-            "Peak Propulsive Power (W)": {"Left": "-", "Right": "-", "Total": f"{peak_prop_p:.0f}"},
-            "Landing Impulse (N·s)": {"Left": "-", "Right": "-", "Total": f"{land_impulse:.0f}"},
-            "COM Height at Take-off (cm)": {"Left": "-", "Right": "-", "Total": f"{com_takeoff:.1f}"}
+            "Jump Height - Flight Time (cm)": {"Left": "-", "Right": "-", "Total": f"{jh_flight:.1f}", "Deficit": "-"},
+            "Jump Height - Impulse-Momentum (cm)": {"Left": "-", "Right": "-", "Total": f"{jh_impulse:.1f}", "Deficit": "-"},
+            "Flight Phase Duration (s)": {"Left": "-", "Right": "-", "Total": f"{flight_dur:.2f}", "Deficit": "-"},
+            "Take-off Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{v_takeoff:.2f}", "Deficit": "-"},
+            "Peak Propulsive Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{peak_v_prop:.2f}", "Deficit": "-"},
+            "RSI Modified (AU)": {"Left": "-", "Right": "-", "Total": f"{rsi_modified:.2f}", "Deficit": "-"},
+            "Peak Propulsive Power (W)": {"Left": "-", "Right": "-", "Total": f"{peak_prop_p:.0f}", "Deficit": "-"},
+            "Landing Impulse (N·s)": {"Left": "-", "Right": "-", "Total": f"{land_impulse:.0f}", "Deficit": "-"},
+            "COM Height at Take-off (cm)": {"Left": "-", "Right": "-", "Total": f"{com_takeoff:.1f}", "Deficit": "-"}
         },
         "2. Eccentric Component (16% Variance)": {
-            "Mean Braking Power (W)": {"Left": "-", "Right": "-", "Total": f"{abs(avg_brak_p):.0f}"},
-            "Mean Braking Force (N)": {"Left": f"{avg_brak_fl:.0f}", "Right": f"{avg_brak_fr:.0f}", "Total": f"{avg_brak_f:.0f}"},
-            "Braking Impulse (N·s)": {"Left": f"{brak_impulse_l:.0f}", "Right": f"{brak_impulse_r:.0f}", "Total": f"{brak_impulse:.0f}"},
-            "Unloading Impulse (N·s)": {"Left": "-", "Right": "-", "Total": f"{unweight_impulse:.0f}"},
-            "Peak Negative Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{peak_v_neg:.2f}"}
+            "Mean Braking Power (W)": {"Left": "-", "Right": "-", "Total": f"{abs(avg_brak_p):.0f}", "Deficit": "-"},
+            "Mean Braking Force (N)": {"Left": f"{avg_brak_fl:.0f}", "Right": f"{avg_brak_fr:.0f}", "Total": f"{avg_brak_f:.0f}", "Deficit": calc_deficit_str(avg_brak_fl, avg_brak_fr)},
+            "Braking Impulse (N·s)": {"Left": f"{brak_impulse_l:.0f}", "Right": f"{brak_impulse_r:.0f}", "Total": f"{brak_impulse:.0f}", "Deficit": calc_deficit_str(brak_impulse_l, brak_impulse_r)},
+            "Unloading Impulse (N·s)": {"Left": "-", "Right": "-", "Total": f"{unweight_impulse:.0f}", "Deficit": "-"},
+            "Peak Negative Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{peak_v_neg:.2f}", "Deficit": "-"}
         },
         "3. Concentric Component (11% Variance)": {
-            "Mean Propulsive Force (N)": {"Left": f"{avg_prop_fl:.0f}", "Right": f"{avg_prop_fr:.0f}", "Total": f"{avg_prop_f:.0f}"},
-            "Peak Propulsive Force (N)": {"Left": f"{peak_prop_fl:.0f}", "Right": f"{peak_prop_fr:.0f}", "Total": f"{peak_prop_f:.0f}"},
-            "Peak Braking Force (N)": {"Left": f"{peak_brak_fl:.0f}", "Right": f"{peak_brak_fr:.0f}", "Total": f"{peak_brak_f:.0f}"},
-            "Mean Propulsive Power (W)": {"Left": "-", "Right": "-", "Total": f"{avg_prop_p:.0f}"},
-            "Propulsive Impulse (N·s)": {"Left": f"{prop_impulse_l:.0f}", "Right": f"{prop_impulse_r:.0f}", "Total": f"{prop_impulse:.0f}"},
-            "Positive Impulse (N·s)": {"Left": "-", "Right": "-", "Total": f"{positive_impulse:.0f}"}
+            "Mean Propulsive Force (N)": {"Left": f"{avg_prop_fl:.0f}", "Right": f"{avg_prop_fr:.0f}", "Total": f"{avg_prop_f:.0f}", "Deficit": calc_deficit_str(avg_prop_fl, avg_prop_fr)},
+            "Peak Propulsive Force (N)": {"Left": f"{peak_prop_fl:.0f}", "Right": f"{peak_prop_fr:.0f}", "Total": f"{peak_prop_f:.0f}", "Deficit": calc_deficit_str(peak_prop_fl, peak_prop_fr)},
+            "Peak Braking Force (N)": {"Left": f"{peak_brak_fl:.0f}", "Right": f"{peak_brak_fr:.0f}", "Total": f"{peak_brak_f:.0f}", "Deficit": calc_deficit_str(peak_brak_fl, peak_brak_fr)},
+            "Mean Propulsive Power (W)": {"Left": "-", "Right": "-", "Total": f"{avg_prop_p:.0f}", "Deficit": "-"},
+            "Propulsive Impulse (N·s)": {"Left": f"{prop_impulse_l:.0f}", "Right": f"{prop_impulse_r:.0f}", "Total": f"{prop_impulse:.0f}", "Deficit": calc_deficit_str(prop_impulse_l, prop_impulse_r)},
+            "Positive Impulse (N·s)": {"Left": "-", "Right": "-", "Total": f"{positive_impulse:.0f}", "Deficit": "-"}
         },
         "4. Jump Strategy Component (6% Variance)": {
-            "Propulsive Phase Duration (s)": {"Left": "-", "Right": "-", "Total": f"{propulsive_dur:.2f}"},
-            "Countermovement Depth (cm)": {"Left": "-", "Right": "-", "Total": f"{com_depth:.1f}"},
-            "Leg Stiffness (N/m)": {"Left": "-", "Right": "-", "Total": f"{leg_stiffness:.0f}" if leg_stiffness > 0 else "N/A"},
-            "Flight Time : Jump Time Ratio (AU)": {"Left": "-", "Right": "-", "Total": f"{flight_jump_ratio:.2f}"}
+            "Propulsive Phase Duration (s)": {"Left": "-", "Right": "-", "Total": f"{propulsive_dur:.2f}", "Deficit": "-"},
+            "Countermovement Depth (cm)": {"Left": "-", "Right": "-", "Total": f"{com_depth:.1f}", "Deficit": "-"},
+            "Leg Stiffness (N/m)": {"Left": "-", "Right": "-", "Total": f"{leg_stiffness:.0f}" if leg_stiffness > 0 else "N/A", "Deficit": "-"},
+            "Flight Time : Jump Time Ratio (AU)": {"Left": "-", "Right": "-", "Total": f"{flight_jump_ratio:.2f}", "Deficit": "-"}
         }
     }
 
@@ -496,13 +543,14 @@ if t is not None and f_total is not None and len(f_total) > 0:
     st.markdown("### Standard Biomechanical Analysis Report (Anicic et al., 2023)")
     table_rows = []
     for phase_name, metrics in report.items():
-        table_rows.append({"Biomechanical Metric": f"=== {phase_name.upper()} ===", "Left": "", "Right": "", "TOTAL": ""})
+        table_rows.append({"Biomechanical Metric": f"=== {phase_name.upper()} ===", "Left": "", "Right": "", "TOTAL": "", "Deficit %": ""})
         for metric_name, vals in metrics.items():
             table_rows.append({
                 "Biomechanical Metric": metric_name,
                 "Left": vals["Left"],
                 "Right": vals["Right"],
-                "TOTAL": vals["Total"]
+                "TOTAL": vals["Total"],
+                "Deficit %": vals["Deficit"]
             })
     
     st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
