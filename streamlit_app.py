@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import json
 import io
+import re
 
 # ReportLab Imports for PDF Generation
 from reportlab.lib.pagesizes import A4
@@ -24,21 +25,20 @@ data_mode = st.sidebar.radio("Select Input Mode", [
     "Dual TSV (Plate A + B)", 
     "VALD ForceDecks (CSV/TSV)", 
     "Single JSON (QTM)", 
-    "Single CSV"
+    "Single CSV (C-Force)"
 ])
 
 filter_size = st.sidebar.selectbox("Smoothing Filter", [1, 7, 15, 31], index=2)
 threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
 
 # ==============================================================================
-# 1. PARSER ENGINES (SECURE TIME SCALING)
+# 1. ROBUST PARSER ENGINES (MANIPULATE EACH FORMAT ACCORDINGLY)
 # ==============================================================================
 
 def parse_tsv(uploaded_file):
     lines = uploaded_file.getvalue().decode('utf-8', errors='ignore').splitlines()
     freq = 2000.0
     data = []
-    
     for line in lines:
         line_str = line.strip()
         if not line_str:
@@ -58,36 +58,67 @@ def parse_tsv(uploaded_file):
                 data.append(vals)
             except ValueError:
                 pass
-
     dt = 1.0 / freq
-    data_arr = np.array(data)
-    return dt, data_arr
+    arr = np.array(data)
+    if len(arr) == 0:
+        return 0.001, np.array([]), np.array([]), np.array([]), np.array([])
+    t = np.arange(len(arr)) * dt
+    f_left = np.abs(arr[:, 0]) if arr.shape[1] > 0 else np.zeros(len(arr))
+    f_right = np.abs(arr[:, 1]) if arr.shape[1] > 1 else f_left
+    f_total = np.abs(arr[:, 2]) if arr.shape[1] > 2 else (f_left + f_right)
+    return dt, t, f_left, f_right, f_total
 
 def parse_vald_forcedecks_exact(uploaded_file):
-    filename = uploaded_file.name.lower()
-    sep = '\t' if filename.endswith('.tsv') else ','
-    
+    """
+    Robust Parser for VALD ForceDecks (supports both old and new ForceDecks Raw Data Export formats).
+    """
     uploaded_file.seek(0)
-    df = pd.read_csv(uploaded_file, skiprows=10, header=None, sep=sep, on_bad_lines='skip')
-    df = df.apply(pd.to_numeric, errors='coerce').dropna(how='all')
+    raw_text = uploaded_file.getvalue().decode('utf-8', errors='ignore')
+    lines = raw_text.splitlines()
     
-    t = df.iloc[:, 0].values.astype(float) if df.shape[1] > 0 else np.arange(len(df)) * 0.001
-    # Force time to start at 0.0 if starts with large timestamp
-    if len(t) > 0 and t[0] > 10.0:
-        t = t - t[0]
+    # Check if new format containing 'Time' and 'Z Left'
+    header_idx = 0
+    is_new_format = False
+    for idx, line in enumerate(lines[:30]):
+        if 'Time' in line and 'Z Left' in line:
+            header_idx = idx
+            is_new_format = True
+            break
+            
+    if is_new_format:
+        data_content = "\n".join(lines[header_idx:])
+        df = pd.read_csv(io.StringIO(data_content))
+        df.columns = [c.strip() for c in df.columns]
         
-    dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
-    
-    f_left = np.abs(df.iloc[:, 1].values.astype(float)) if df.shape[1] > 1 else np.zeros(len(df))
-    f_right = np.abs(df.iloc[:, 4].values.astype(float)) if df.shape[1] > 4 else f_left
-    f_total = f_left + f_right
-    
-    return dt, t, f_left, f_right, f_total
+        t = df['Time'].values.astype(float)
+        if len(t) > 0 and t[0] > 10.0:
+            t = t - t[0]
+        dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
+        
+        f_left = np.abs(df['Z Left'].values.astype(float))
+        f_right = np.abs(df['Z Right'].values.astype(float))
+        f_total = f_left + f_right
+        return dt, t, f_left, f_right, f_total
+    else:
+        # Fallback to old format (skiprows=10, Col B [1] & Col E [4])
+        filename = uploaded_file.name.lower()
+        sep = '\t' if filename.endswith('.tsv') else ','
+        df = pd.read_csv(io.StringIO(raw_text), skiprows=10, header=None, sep=sep, on_bad_lines='skip')
+        df = df.apply(pd.to_numeric, errors='coerce').dropna(how='all')
+        
+        t = df.iloc[:, 0].values.astype(float) if df.shape[1] > 0 else np.arange(len(df)) * 0.001
+        if len(t) > 0 and t[0] > 10.0:
+            t = t - t[0]
+        dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
+        
+        f_left = np.abs(df.iloc[:, 1].values.astype(float)) if df.shape[1] > 1 else np.zeros(len(df))
+        f_right = np.abs(df.iloc[:, 4].values.astype(float)) if df.shape[1] > 4 else f_left
+        f_total = f_left + f_right
+        return dt, t, f_left, f_right, f_total
 
 def parse_qtm_json(uploaded_file):
     content = json.load(uploaded_file)
     root = content[0] if isinstance(content, list) else content
-    
     freq = root.get("Timebase", {}).get("Frequency", 120.0)
     dt = 1.0 / freq
     plates = root.get("ForcePlates", [])
@@ -107,13 +138,31 @@ def parse_qtm_json(uploaded_file):
         f_left = np.abs(vals[:num_frames, 2]) * 0.5
         f_right = np.abs(vals[:num_frames, 2]) * 0.5
         
-    # Strictly generate time in seconds (frame index * dt)
     t = np.arange(num_frames) * dt
-    
     # QTM Force Unit Scale Fix (mN -> N)
     f_left = f_left / 1000.0
     f_right = f_right / 1000.0
     f_total = f_left + f_right
+    return dt, t, f_left, f_right, f_total
+
+def parse_single_csv_cforce(uploaded_file):
+    uploaded_file.seek(0)
+    df = pd.read_csv(uploaded_file, on_bad_lines='skip')
+    df.columns = [c.strip().lower() for c in df.columns]
+    
+    time_col = next((c for c in df.columns if 'time' in c or c == 't'), df.columns[0])
+    total_col = next((c for c in df.columns if 'force' in c and 'left' not in c and 'right' not in c), df.columns[1] if len(df.columns) > 1 else None)
+    left_col = next((c for c in df.columns if 'left' in c), df.columns[2] if len(df.columns) > 2 else None)
+    right_col = next((c for c in df.columns if 'right' in c), df.columns[3] if len(df.columns) > 3 else None)
+    
+    t = pd.to_numeric(df[time_col], errors='coerce').fillna(0).values
+    if len(t) > 0 and t[0] > 10.0:
+        t = t - t[0]
+    dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
+    
+    f_total = np.abs(pd.to_numeric(df[total_col], errors='coerce').fillna(0).values) if total_col else np.zeros(len(df))
+    f_left = np.abs(pd.to_numeric(df[left_col], errors='coerce').fillna(0).values) if left_col else f_total * 0.5
+    f_right = np.abs(pd.to_numeric(df[right_col], errors='coerce').fillna(0).values) if right_col else f_total * 0.5
     
     return dt, t, f_left, f_right, f_total
 
@@ -148,7 +197,7 @@ def calc_deficit_str(val_l, val_r):
         return "-"
 
 # ==============================================================================
-# 3. PDF REPORT GENERATOR (RELIABLE METRICS ACCORDING TO ANICIC ET AL., 2023)
+# 3. PDF REPORT GENERATOR
 # ==============================================================================
 
 def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff):
@@ -283,19 +332,16 @@ elif data_mode == "Single JSON (QTM)":
         except Exception as e:
             st.error(f"Error parsing QTM JSON file: {e}")
 
-elif data_mode == "Single CSV":
-    file_csv = st.sidebar.file_uploader("Upload CSV File (.csv)", type=["csv"])
+elif data_mode == "Single CSV (C-Force)":
+    file_csv = st.sidebar.file_uploader("Upload Single CSV File (.csv)", type=["csv"])
     if file_csv:
-        df_csv = pd.read_csv(file_csv)
-        if 'time' in df_csv.columns:
-            t = df_csv['time'].values
-            dt = t[1] - t[0] if len(t) > 1 else 1.0/1000.0
-            f_left = df_csv['left force'].values if 'left force' in df_csv.columns else df_csv['force '].values * 0.5
-            f_right = df_csv['right force'].values if 'right force' in df_csv.columns else df_csv['force '].values * 0.5
-            f_total = f_left + f_right
+        try:
+            dt, t, f_left, f_right, f_total = parse_single_csv_cforce(file_csv)
+        except Exception as e:
+            st.error(f"Error parsing Single CSV file: {e}")
 
 # ==============================================================================
-# 5. CORE ANALYSIS & REPORT RENDERING (ANICIC ET AL., 2023 24 RELIABLE METRICS)
+# 5. CORE ANALYSIS & REPORT RENDERING (24 RELIABLE METRICS)
 # ==============================================================================
 
 if t is not None and f_total is not None and len(f_total) > 0:
@@ -507,7 +553,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
 
     fig_force.add_annotation(x=t_start + (t_braking - t_start)/2, y=max_f * 1.05, text="UNWEIGHTING", showarrow=False, font=dict(color='#ca8a04', size=10))
     fig_force.add_annotation(x=t_braking + (t_split - t_braking)/2, y=max_f * 1.18, text="BRAKING", showarrow=False, font=dict(color='#ef4444', size=10))
-    fig_force.add_annotation(x=t_split + (t_takeoff - t_split)/2, y=max_f * 1.05, text="PROPULSIVE", showarrow=False, font=dict(color='#22c55e', size=10))
+    fig_force.add_annotation(x=t_split + (t_takeoff - t_split)/2, y=max_f * 1.05, text="PROPULSIVE", showarrow=False, font=dict(color='#ca8a04', size=10))
 
     fig_force.update_layout(title="FORCE-TIME ANALYSIS & SUB-PHASES", xaxis_title="Time (s)", yaxis_title="Force (N)", height=420)
     st.plotly_chart(fig_force, use_container_width=True)
