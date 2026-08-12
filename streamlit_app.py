@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import json
 
 st.set_page_config(layout="wide", page_title="Free JumpAnz Team - Prima Motion Tech")
 
@@ -11,12 +12,8 @@ st.caption("PRIMA MOTION TECHNOLOGY — Technology that unlocks scientific insig
 # --- SIDEBAR: FILE IMPORT & CONTROL ---
 st.sidebar.header("Data Import & Settings")
 
-# 1. File Uploaders for Dual TSV
-file_a = st.sidebar.file_uploader("Upload Plate File A (.tsv)", type=["tsv"])
-side_a = st.sidebar.selectbox("Assign Side File A", ["left", "right"], index=0)
-
-file_b = st.sidebar.file_uploader("Upload Plate File B (.tsv)", type=["tsv"])
-side_b = st.sidebar.selectbox("Assign Side File B", ["left", "right"], index=1)
+# Choice of Data Source
+data_mode = st.sidebar.radio("Select Input Mode", ["Dual TSV (Plate A + B)", "Single JSON (QTM)", "Single CSV"])
 
 filter_size = st.sidebar.selectbox("Smoothing Filter", [1, 7, 15, 31], index=2)
 threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
@@ -47,6 +44,33 @@ def parse_tsv(uploaded_file):
                 pass
     return freq, np.array(data)
 
+def parse_qtm_json(uploaded_file):
+    content = json.load(uploaded_file)
+    root = content[0] if isinstance(content, list) else content
+    
+    freq = root.get("Timebase", {}).get("Frequency", 120.0)
+    dt = 1.0 / freq
+    plates = root.get("ForcePlates", [])
+    
+    if len(plates) == 0:
+        return None, None, None, None
+        
+    if len(plates) >= 2:
+        vals_l = np.array(plates[0]["Parts"][0]["Values"])
+        vals_r = np.array(plates[-1]["Parts"][0]["Values"])
+        num_frames = min(len(vals_l), len(vals_r))
+        f_left = np.abs(vals_l[:num_frames, 2])
+        f_right = np.abs(vals_r[:num_frames, 2])
+    else:
+        vals = np.array(plates[0]["Parts"][0]["Values"])
+        num_frames = len(vals)
+        f_left = np.abs(vals[:num_frames, 2]) * 0.5
+        f_right = np.abs(vals[:num_frames, 2]) * 0.5
+        
+    t = np.arange(num_frames) * dt
+    f_total = f_left + f_right
+    return dt, t, f_left, f_right, f_total
+
 def moving_average(arr, window):
     if window <= 1:
         return arr
@@ -61,24 +85,49 @@ def calc_impulse(arr, dt):
 def calc_net_impulse(arr, base, dt):
     return np.sum(arr - base) * dt
 
-# Main Processing Block
-if file_a and file_b:
-    freq_a, data_a = parse_tsv(file_a)
-    freq_b, data_b = parse_tsv(file_b)
+# Initialize Data Variables
+dt, t, f_left, f_right, f_total = None, None, None, None, None
+
+# --- PARSING SECTION BASED ON MODE ---
+if data_mode == "Dual TSV (Plate A + B)":
+    file_a = st.sidebar.file_uploader("Upload Plate File A (.tsv)", type=["tsv"])
+    side_a = st.sidebar.selectbox("Assign Side File A", ["left", "right"], index=0)
+    file_b = st.sidebar.file_uploader("Upload Plate File B (.tsv)", type=["tsv"])
+    side_b = st.sidebar.selectbox("Assign Side File B", ["left", "right"], index=1)
     
-    dt = 1.0 / freq_a
-    num_frames = min(len(data_a), len(data_b))
-    t = np.arange(num_frames) * dt
-    
-    # Col Index 2 = Fz (Vertical Force)
-    fz_a = np.abs(data_a[:num_frames, 2])
-    fz_b = np.abs(data_b[:num_frames, 2])
-    
-    f_left = fz_a if side_a == "left" else fz_b
-    f_right = fz_b if side_a == "left" else fz_a
-    f_total = f_left + f_right
-    
-    # Apply Smoothing Filter
+    if file_a and file_b:
+        freq_a, data_a = parse_tsv(file_a)
+        freq_b, data_b = parse_tsv(file_b)
+        dt = 1.0 / freq_a
+        num_frames = min(len(data_a), len(data_b))
+        t = np.arange(num_frames) * dt
+        fz_a = np.abs(data_a[:num_frames, 2])
+        fz_b = np.abs(data_b[:num_frames, 2])
+        f_left = fz_a if side_a == "left" else fz_b
+        f_right = fz_b if side_a == "left" else fz_a
+        f_total = f_left + f_right
+
+elif data_mode == "Single JSON (QTM)":
+    file_json = st.sidebar.file_uploader("Upload QTM JSON File (.json)", type=["json"])
+    if file_json:
+        try:
+            dt, t, f_left, f_right, f_total = parse_qtm_json(file_json)
+        except Exception as e:
+            st.error(f"Error parsing QTM JSON file: {e}")
+
+elif data_mode == "Single CSV":
+    file_csv = st.sidebar.file_uploader("Upload CSV File (.csv)", type=["csv"])
+    if file_csv:
+        df_csv = pd.read_csv(file_csv)
+        if 'time' in df_csv.columns:
+            t = df_csv['time'].values
+            dt = t[1] - t[0] if len(t) > 1 else 1.0/1000.0
+            f_left = df_csv['left force'].values if 'left force' in df_csv.columns else df_csv['force '].values * 0.5
+            f_right = df_csv['right force'].values if 'right force' in df_csv.columns else df_csv['force '].values * 0.5
+            f_total = f_left + f_right
+
+# --- CORE PROCESSING & ANALYSIS BLOCK ---
+if t is not None and f_total is not None:
     sf = moving_average(f_total, filter_size)
     sl = moving_average(f_left, filter_size)
     sr = moving_average(f_right, filter_size)
@@ -86,7 +135,7 @@ if file_a and file_b:
     g = 9.80665
     quiet_samples = max(1, int(0.5 / dt))
     
-    # 1. Quiet Standing Calibration
+    # Calibration
     bw = np.mean(sf[:quiet_samples])
     bw_left = np.mean(sl[:quiet_samples])
     bw_right = np.mean(sr[:quiet_samples])
@@ -96,7 +145,7 @@ if file_a and file_b:
     mass_left = bw_left / g
     mass_right = bw_right / g
     
-    # --- AUTO DETECT SUB-PHASE BOUNDARIES (SEQUENTIAL LOGIC) ---
+    # Auto-Detect Phase Boundaries
     flight_threshold = 30.0
     flight_start = -1
     flight_end = -1
@@ -139,7 +188,7 @@ if file_a and file_b:
     zero_vel_matches = np.where(vel_temp[bIdx_auto - sIdx_auto:] >= 0)[0]
     zIdx_auto = (bIdx_auto + zero_vel_matches[0]) if len(zero_vel_matches) > 0 else bIdx_auto
 
-    # Sidebar Sliders for Adjusting Phase Times
+    # Sliders for Adjusting Phase Times
     st.sidebar.markdown("---")
     st.sidebar.subheader("Phase Adjustment")
     
@@ -182,7 +231,7 @@ if file_a and file_b:
     braking_dur = t[zIdx] - t[bIdx]
     propulsive_dur = t[tIdx] - t[zIdx]
 
-    # Sub-phase Arrays
+    # Metrics Calculation
     brak_f = sf[bIdx:zIdx + 1]
     brak_fl = sl[bIdx:zIdx + 1]
     brak_fr = sr[bIdx:zIdx + 1]
@@ -230,7 +279,6 @@ if file_a and file_b:
     prop_impulse_r = calc_impulse(prop_fr, dt)
     prop_net_impulse = calc_net_impulse(prop_f, bw, dt)
 
-    # Landing Metrics
     avg_land_f = avg_land_fl = avg_land_fr = 0.0
     peak_land_f = peak_land_fl = peak_land_fr = 0.0
     land_stiffness = 0.0
@@ -258,7 +306,6 @@ if file_a and file_b:
                 time_to_stab = t[i] - t[lIdx]
                 break
 
-    # Build Complete Report Dictionary
     report = {
         "Unweighting Phase": {
             "Unweighting Phase Duration (s)": {"Left": "-", "Right": "-", "Total": f"{unweight_dur:.2f}"},
@@ -310,7 +357,7 @@ if file_a and file_b:
         }
     }
 
-    # Display Force-Time Chart
+    # Plot Force-Time Chart
     max_f = np.max(sf)
     fig_force = go.Figure()
     fig_force.add_trace(go.Scatter(x=t, y=sl, name="Left Limb", line=dict(color='#818cf8', width=2)))
@@ -333,7 +380,7 @@ if file_a and file_b:
     fig_force.update_layout(title="FORCE-TIME ANALYSIS & SUB-PHASES", xaxis_title="Time (s)", yaxis_title="Force (N)", height=420)
     st.plotly_chart(fig_force, use_container_width=True)
 
-    # Display Asymmetry Deficit Chart
+    # Plot Asymmetry Deficit Chart
     deficits = np.where(sf >= 50, ((sl - sr) / np.maximum(sl, sr)) * 100, 0)
     fig_deficit = go.Figure()
     fig_deficit.add_trace(go.Scatter(x=t, y=deficits, name="Asymmetry", fill='tozeroy', fillcolor='rgba(77, 41, 148, 0.15)', line=dict(color='#4d2994', width=2)))
@@ -357,4 +404,4 @@ if file_a and file_b:
     st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
 
 else:
-    st.info("Please upload Plate File A and Plate File B (.tsv) to begin analysis.")
+    st.info("Please upload data file(s) to begin analysis.")
