@@ -32,6 +32,7 @@ def detect_phases_sequential(t, sf, dt, quiet_samples):
     force_sd = np.std(sf[:quiet_samples])
     mass = bw / g
 
+    # 1. Anchor: Find the main airborne segment (Take-off & Landing)
     flight_mask = sf < 20.0
     labeled, num_features = label(flight_mask)
     
@@ -40,30 +41,37 @@ def detect_phases_sequential(t, sf, dt, quiet_samples):
         main_flight_label = np.argmax(block_lengths) + 1
         flight_indices = np.where(labeled == main_flight_label)[0]
         
-        tIdx_auto = flight_indices[0]
-        lIdx_auto = flight_indices[-1]
+        tIdx_auto = flight_indices[0]  # Take-off
+        lIdx_auto = flight_indices[-1] # Landing
     else:
         tIdx_auto = int(n_samples * 0.7)
         lIdx_auto = int(n_samples * 0.8)
 
+    # 2. Find Propulsion Peak before Take-off
     prop_search_start = max(0, tIdx_auto - int(1.5 / dt))
     if tIdx_auto > prop_search_start:
         peak_prop_idx = prop_search_start + np.argmax(sf[prop_search_start:tIdx_auto])
     else:
         peak_prop_idx = max(0, tIdx_auto - 1)
 
+    # 3. Find Braking Minimum Force (Dip before Propulsion)
     if peak_prop_idx > prop_search_start:
         bIdx_auto = prop_search_start + np.argmin(sf[prop_search_start:peak_prop_idx])
     else:
         bIdx_auto = max(0, peak_prop_idx - int(0.2 / dt))
 
-    bw_dev = max(force_sd * 5, bw * 0.025)
-    start_search = np.where((np.arange(n_samples) < bIdx_auto) & (sf >= bw - bw_dev))[0]
-    if len(start_search) > 0:
-        sIdx_auto = start_search[-1]
+    # 4. ROBUST Unweighting Onset (sIdx): Scan BACKWARDS from Braking Min Force
+    # Look for the last frame before the dip where force was within 97.5% BW threshold
+    threshold_bw = max(bw * 0.975, bw - 5 * force_sd)
+    back_search_window = sf[:bIdx_auto]
+    bw_crossings = np.where(back_search_window >= threshold_bw)[0]
+    
+    if len(bw_crossings) > 0:
+        sIdx_auto = bw_crossings[-1]  # Exact start of downward countermovement
     else:
         sIdx_auto = max(0, bIdx_auto - int(0.4 / dt))
 
+    # 5. Propulsive Onset (V = 0 crossing)
     vel_temp = np.cumsum((sf[sIdx_auto:tIdx_auto + 1] - bw) / mass) * dt
     b_rel = max(0, bIdx_auto - sIdx_auto)
     zero_crossings = np.where(vel_temp[b_rel:] >= 0)[0]
@@ -72,6 +80,7 @@ def detect_phases_sequential(t, sf, dt, quiet_samples):
     else:
         zIdx_auto = bIdx_auto
 
+    # Logical Constraints Order Bounding
     tIdx_auto = min(tIdx_auto, n_samples - 1)
     lIdx_auto = min(lIdx_auto, n_samples - 1)
     zIdx_auto = min(zIdx_auto, tIdx_auto)
