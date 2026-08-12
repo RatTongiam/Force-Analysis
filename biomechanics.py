@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from scipy.ndimage import label
 
 def moving_average(arr, window):
     if window <= 1:
@@ -31,26 +32,58 @@ def detect_phases_sequential(t, sf, dt, quiet_samples):
     force_sd = np.std(sf[:quiet_samples])
     mass = bw / g
 
-    unweight_cands = np.where(sf < bw - 3 * force_sd)[0]
-    sIdx_auto = unweight_cands[0] if len(unweight_cands) > 0 else int(quiet_samples)
+    # 1. Anchor: Identify the true main Flight Phase (airborne contiguous block)
+    flight_mask = sf < 20.0
+    labeled, num_features = label(flight_mask)
+    
+    if num_features > 0:
+        block_lengths = [np.sum(labeled == i) for i in range(1, num_features + 1)]
+        main_flight_label = np.argmax(block_lengths) + 1
+        flight_indices = np.where(labeled == main_flight_label)[0]
+        
+        tIdx_auto = flight_indices[0]  # True Take-off
+        lIdx_auto = flight_indices[-1] # True Landing
+    else:
+        # Fallback if no airborne phase is found
+        tIdx_auto = int(n_samples * 0.7)
+        lIdx_auto = int(n_samples * 0.8)
 
-    search_end_b = min(sIdx_auto + int(1.2 / dt), n_samples)
-    bIdx_auto = (sIdx_auto + np.argmin(sf[sIdx_auto:search_end_b])) if search_end_b > sIdx_auto else sIdx_auto
+    # 2. Search BEFORE Take-off for Propulsion Peak & Braking Minimum
+    prop_search_start = max(0, tIdx_auto - int(1.5 / dt))
+    if tIdx_auto > prop_search_start:
+        peak_prop_idx = prop_search_start + np.argmax(sf[prop_search_start:tIdx_auto])
+    else:
+        peak_prop_idx = max(0, tIdx_auto - 1)
 
-    vel_temp = np.cumsum((sf[sIdx_auto:] - bw) / mass) * dt
+    # Min force before peak force = Braking Onset (Min Force)
+    if peak_prop_idx > prop_search_start:
+        bIdx_auto = prop_search_start + np.argmin(sf[prop_search_start:peak_prop_idx])
+    else:
+        bIdx_auto = max(0, peak_prop_idx - int(0.2 / dt))
+
+    # 3. Search BACKWARDS from Braking Min Force to find true Unweighting Onset (Start)
+    bw_dev = max(force_sd * 5, bw * 0.025)
+    start_search = np.where((np.arange(n_samples) < bIdx_auto) & (sf >= bw - bw_dev))[0]
+    if len(start_search) > 0:
+        sIdx_auto = start_search[-1]
+    else:
+        sIdx_auto = max(0, bIdx_auto - int(0.4 / dt))
+
+    # 4. Propulsive Onset (V = 0 crossing)
+    vel_temp = np.cumsum((sf[sIdx_auto:tIdx_auto + 1] - bw) / mass) * dt
     b_rel = max(0, bIdx_auto - sIdx_auto)
     zero_crossings = np.where(vel_temp[b_rel:] >= 0)[0]
-    zIdx_auto = (bIdx_auto + zero_crossings[0]) if len(zero_crossings) > 0 else bIdx_auto
-
-    flight_threshold = 15.0
-    flight_cands = np.where((np.arange(n_samples) > zIdx_auto) & (sf < flight_threshold))[0]
-    if len(flight_cands) > 0:
-        tIdx_auto = flight_cands[0]
-        l_cands = np.where((np.arange(n_samples) > tIdx_auto + int(0.05 / dt)) & (sf >= flight_threshold))[0]
-        lIdx_auto = l_cands[0] if len(l_cands) > 0 else n_samples - 1
+    if len(zero_crossings) > 0:
+        zIdx_auto = bIdx_auto + zero_crossings[0]
     else:
-        tIdx_auto = min(n_samples - 1, zIdx_auto + int(0.3 / dt))
-        lIdx_auto = min(n_samples - 1, tIdx_auto + int(0.1 / dt))
+        zIdx_auto = bIdx_auto
+
+    # Ensure logical sequence constraints
+    tIdx_auto = min(tIdx_auto, n_samples - 1)
+    lIdx_auto = min(lIdx_auto, n_samples - 1)
+    zIdx_auto = min(zIdx_auto, tIdx_auto)
+    bIdx_auto = min(bIdx_auto, zIdx_auto)
+    sIdx_auto = min(sIdx_auto, bIdx_auto)
 
     return sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto
 
