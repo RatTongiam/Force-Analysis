@@ -59,24 +59,14 @@ def parse_tsv(uploaded_file):
     return freq, np.array(data)
 
 def parse_vald_forcedecks_exact(uploaded_file):
-    """
-    Exact Parser for VALD ForceDecks Files:
-    - Reads numerical data starting from Row 11 (index 10)
-    - Column A [0] = Time (s)
-    - Column B [1] = Left Force Fz
-    - Column E [4] = Right Force Fz
-    """
     filename = uploaded_file.name.lower()
     sep = '\t' if filename.endswith('.tsv') else ','
     
-    # Read CSV starting from row 11 (skipfirst 10 lines)
     uploaded_file.seek(0)
     df = pd.read_csv(uploaded_file, skiprows=10, header=None, sep=sep, on_bad_lines='skip')
     
-    # Filter only clean numeric rows
     df = df.apply(pd.to_numeric, errors='coerce').dropna(how='all')
     
-    # Extract Time (Col A [0]), Left (Col B [1]), Right (Col E [4])
     t = df.iloc[:, 0].values.astype(float) if df.shape[1] > 0 else np.arange(len(df)) * 0.001
     dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
     
@@ -280,8 +270,9 @@ if t is not None and f_total is not None and len(f_total) > 0:
     sl = moving_average(f_left, filter_size)
     sr = moving_average(f_right, filter_size)
     
+    n_samples = len(sf)
     g = 9.80665
-    quiet_samples = max(1, int(0.5 / dt))
+    quiet_samples = max(1, min(int(0.5 / dt), n_samples))
     
     bw = np.mean(sf[:quiet_samples])
     bw_left = np.mean(sl[:quiet_samples])
@@ -294,34 +285,37 @@ if t is not None and f_total is not None and len(f_total) > 0:
     
     flight_threshold = 30.0
     flight_indices = np.where(sf < flight_threshold)[0]
-    tIdx_auto = flight_indices[0] if len(flight_indices) > 0 else len(sf) - 1
+    tIdx_auto = flight_indices[0] if len(flight_indices) > 0 else n_samples - 1
+    tIdx_auto = min(tIdx_auto, n_samples - 1)
     
     lIdx_matches = np.where((t > t[tIdx_auto] + 0.05) & (sf >= flight_threshold))[0]
-    lIdx_auto = lIdx_matches[0] if len(lIdx_matches) > 0 else len(sf) - 1
+    lIdx_auto = lIdx_matches[0] if len(lIdx_matches) > 0 else n_samples - 1
+    lIdx_auto = min(lIdx_auto, n_samples - 1)
 
     window_size = max(1, int(0.03 / dt))
     threshold_dev = max(force_sd * 5, bw * 0.025)
 
     sIdx_auto = 0
-    for i in range(quiet_samples, tIdx_auto - window_size):
-        if np.all(np.abs(sf[i:i + window_size] - bw) > threshold_dev):
+    for i in range(quiet_samples, max(quiet_samples + 1, tIdx_auto - window_size)):
+        if i + window_size <= n_samples and np.all(np.abs(sf[i:i + window_size] - bw) > threshold_dev):
             sIdx_auto = i
             break
 
     peak_force_idx = sIdx_auto + np.argmax(sf[sIdx_auto:tIdx_auto + 1])
+    peak_force_idx = min(peak_force_idx, n_samples - 1)
     
-    # Safe np.argmin check to prevent ValueError
     unweight_slice = sf[sIdx_auto:peak_force_idx]
     if len(unweight_slice) > 0:
         min_force_idx = sIdx_auto + np.argmin(unweight_slice)
     else:
         min_force_idx = sIdx_auto
 
-    bIdx_auto = min_force_idx
+    bIdx_auto = min(min_force_idx, n_samples - 1)
 
     vel_temp = np.cumsum((sf[sIdx_auto:tIdx_auto + 1] - bw) / mass) * dt
     zero_vel_matches = np.where(vel_temp[bIdx_auto - sIdx_auto:] >= 0)[0]
     zIdx_auto = (bIdx_auto + zero_vel_matches[0]) if len(zero_vel_matches) > 0 else bIdx_auto
+    zIdx_auto = min(zIdx_auto, n_samples - 1)
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("Phase Adjustment")
@@ -331,22 +325,25 @@ if t is not None and f_total is not None and len(f_total) > 0:
     t_split = st.sidebar.slider("Propulsive Onset (V=0)", 0.0, float(t[-1]), float(t[zIdx_auto]), step=0.005)
     t_takeoff = st.sidebar.slider("Take-off", 0.0, float(t[-1]), float(t[tIdx_auto]), step=0.005)
 
-    sIdx = max(0, int(round(t_start / dt)))
-    bIdx = max(0, int(round(t_braking / dt)))
-    zIdx = max(0, int(round(t_split / dt)))
-    tIdx = max(0, int(round(t_takeoff / dt)))
+    # Safe Boundary Array Index Bounding
+    sIdx = min(max(0, int(round(t_start / dt))), n_samples - 1)
+    bIdx = min(max(0, int(round(t_braking / dt))), n_samples - 1)
+    zIdx = min(max(0, int(round(t_split / dt))), n_samples - 1)
+    tIdx = min(max(0, int(round(t_takeoff / dt))), n_samples - 1)
     
-    lIdx_matches = np.where((t > t_takeoff + 0.05) & (sf >= flight_threshold))[0]
-    lIdx = lIdx_matches[0] if len(lIdx_matches) > 0 else len(sf) - 1
+    lIdx_matches = np.where((t > t[tIdx] + 0.05) & (sf >= flight_threshold))[0]
+    lIdx = lIdx_matches[0] if len(lIdx_matches) > 0 else n_samples - 1
+    lIdx = min(lIdx, n_samples - 1)
 
-    vel_total = np.zeros(len(sf))
-    vel_l = np.zeros(len(sf))
-    vel_r = np.zeros(len(sf))
-    disp_total = np.zeros(len(sf))
+    vel_total = np.zeros(n_samples)
+    vel_l = np.zeros(n_samples)
+    vel_r = np.zeros(n_samples)
+    disp_total = np.zeros(n_samples)
 
     cV = cVL = cVR = cD = 0.0
 
-    for i in range(sIdx, tIdx + 1):
+    # Safe Integration Loop
+    for i in range(sIdx, min(tIdx + 1, n_samples)):
         cV += ((sf[i] - bw) / mass) * dt
         cVL += ((sl[i] - bw_left) / mass_left) * dt
         cVR += ((sr[i] - bw_right) / mass_right) * dt
@@ -357,9 +354,9 @@ if t is not None and f_total is not None and len(f_total) > 0:
         disp_total[i] = cD
 
     contraction_time = max(dt, t[tIdx] - t[sIdx])
-    unweight_dur = t[bIdx] - t[sIdx]
-    braking_dur = t[zIdx] - t[bIdx]
-    propulsive_dur = t[tIdx] - t[zIdx]
+    unweight_dur = max(0.0, t[bIdx] - t[sIdx])
+    braking_dur = max(0.0, t[zIdx] - t[bIdx])
+    propulsive_dur = max(0.0, t[tIdx] - t[zIdx])
     flight_dur = max(0.0, t[lIdx] - t[tIdx])
 
     jh_flight = (g * (flight_dur ** 2)) / 8.0 * 100.0
@@ -367,13 +364,13 @@ if t is not None and f_total is not None and len(f_total) > 0:
     jh_impulse = ((v_takeoff ** 2) / (2.0 * g)) * 100.0
     rsi_modified = (jh_flight / 100.0) / contraction_time if contraction_time > 0 else 0.0
 
-    unweight_f = sf[sIdx:bIdx + 1]
+    unweight_f = sf[sIdx:min(bIdx + 1, n_samples)]
     unweight_impulse = calc_impulse(unweight_f, dt)
 
-    brak_f = sf[bIdx:zIdx + 1]
-    brak_fl = sl[bIdx:zIdx + 1]
-    brak_fr = sr[bIdx:zIdx + 1]
-    brak_v = vel_total[bIdx:zIdx + 1]
+    brak_f = sf[bIdx:min(zIdx + 1, n_samples)]
+    brak_fl = sl[bIdx:min(zIdx + 1, n_samples)]
+    brak_fr = sr[bIdx:min(zIdx + 1, n_samples)]
+    brak_v = vel_total[bIdx:min(zIdx + 1, n_samples)]
     brak_p = brak_f * brak_v
 
     avg_brak_f = calc_avg(brak_f)
@@ -383,17 +380,17 @@ if t is not None and f_total is not None and len(f_total) > 0:
     peak_brak_f = np.max(brak_f) if len(brak_f) > 0 else 0.0
     peak_brak_fl = np.max(brak_fl) if len(brak_fl) > 0 else 0.0
     peak_brak_fr = np.max(brak_fr) if len(brak_fr) > 0 else 0.0
-    peak_v_neg = np.min(vel_total[sIdx:zIdx + 1]) if len(vel_total[sIdx:zIdx + 1]) > 0 else 0.0
+    peak_v_neg = np.min(vel_total[sIdx:min(zIdx + 1, n_samples)]) if len(vel_total[sIdx:min(zIdx + 1, n_samples)]) > 0 else 0.0
 
     brak_impulse = calc_impulse(brak_f, dt)
     brak_impulse_l = calc_impulse(brak_fl, dt)
     brak_impulse_r = calc_impulse(brak_fr, dt)
     brak_net_impulse = calc_net_impulse(brak_f, bw, dt)
 
-    prop_f = sf[zIdx:tIdx + 1]
-    prop_fl = sl[zIdx:tIdx + 1]
-    prop_fr = sr[zIdx:tIdx + 1]
-    prop_v = vel_total[zIdx:tIdx + 1]
+    prop_f = sf[zIdx:min(tIdx + 1, n_samples)]
+    prop_fl = sl[zIdx:min(tIdx + 1, n_samples)]
+    prop_fr = sr[zIdx:min(tIdx + 1, n_samples)]
+    prop_v = vel_total[zIdx:min(tIdx + 1, n_samples)]
     prop_p = prop_f * prop_v
 
     avg_prop_f = calc_avg(prop_f)
@@ -414,8 +411,8 @@ if t is not None and f_total is not None and len(f_total) > 0:
     positive_impulse = brak_impulse + prop_impulse
 
     land_impulse = 0.0
-    if lIdx > tIdx and lIdx < len(sf):
-        land_end_idx = min(len(sf), lIdx + int(0.5 / dt))
+    if lIdx > tIdx and lIdx < n_samples:
+        land_end_idx = min(n_samples, lIdx + int(0.5 / dt))
         land_impulse = calc_impulse(sf[lIdx:land_end_idx], dt)
 
     com_depth = abs(disp_total[zIdx] - disp_total[sIdx]) * 100.0
