@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import matplotlib.pyplot as plt
 import json
 import io
 
@@ -91,8 +92,8 @@ def calc_impulse(arr, dt):
 def calc_net_impulse(arr, base, dt):
     return np.sum(arr - base) * dt
 
-# --- PDF GENERATION ENGINE ---
-def generate_pdf_report(report_data, fig_force):
+# --- PDF GENERATION ENGINE USING MATPLOTLIB FOR CHART ---
+def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, bw):
     pdf_buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         pdf_buffer,
@@ -120,16 +121,6 @@ def generate_pdf_report(report_data, fig_force):
         leading=12,
         textColor=colors.HexColor('#1a0f30')
     )
-    section_style = ParagraphStyle(
-        'SectionHeader',
-        parent=styles['Heading2'],
-        fontName='Helvetica-Bold',
-        fontSize=11,
-        leading=14,
-        textColor=colors.HexColor('#4d2994'),
-        spaceBefore=10,
-        spaceAfter=4
-    )
     cell_style = ParagraphStyle(
         'TableCell',
         parent=styles['Normal'],
@@ -151,9 +142,34 @@ def generate_pdf_report(report_data, fig_force):
     story.append(Paragraph("FREE JUMPANZ TEAM — PRIMA MOTION TECHNOLOGY", subtitle_style))
     story.append(Spacer(1, 10))
     
-    # Export Plotly Chart to Image Bytes and Embed into PDF
-    img_bytes = fig_force.to_image(format="png", width=750, height=300, scale=2)
-    img_buffer = io.BytesIO(img_bytes)
+    # Generate Chart PNG via Matplotlib
+    fig_plt, ax = plt.subplots(figsize=(8, 3.2), dpi=200)
+    ax.plot(t, sl, label='Left Limb', color='#818cf8', linewidth=1.5)
+    ax.plot(t, sr, label='Right Limb', color='#f87171', linewidth=1.5)
+    ax.plot(t, sf, label='Total Force', color='#4d2994', linewidth=2.5)
+
+    max_f = np.max(sf)
+    ax.axvspan(t_start, t_braking, color='yellow', alpha=0.15)
+    ax.axvspan(t_braking, t_split, color='red', alpha=0.15)
+    ax.axvspan(t_split, t_takeoff, color='green', alpha=0.15)
+
+    ax.axvline(t_start, color='#ca8a04', linestyle='--', linewidth=1)
+    ax.axvline(t_braking, color='#ef4444', linestyle='--', linewidth=1)
+    ax.axvline(t_split, color='#22c55e', linestyle='--', linewidth=1)
+    ax.axvline(t_takeoff, color='#dc2626', linestyle='--', linewidth=1)
+
+    ax.set_title("FORCE-TIME ANALYSIS & SUB-PHASES", fontsize=10, fontweight='bold', color='#1a0f30')
+    ax.set_xlabel("Time (s)", fontsize=8)
+    ax.set_ylabel("Force (N)", fontsize=8)
+    ax.legend(loc='upper right', fontsize=7)
+    ax.grid(True, linestyle=':', alpha=0.5)
+
+    plt.tight_layout()
+    img_buffer = io.BytesIO()
+    plt.savefig(img_buffer, format='png', dpi=200)
+    plt.close(fig_plt)
+    img_buffer.seek(0)
+
     story.append(Image(img_buffer, width=520, height=208))
     story.append(Spacer(1, 10))
     
@@ -166,7 +182,6 @@ def generate_pdf_report(report_data, fig_force):
     ]
     
     for phase_name, metrics in report_data.items():
-        # Phase Sub-header Row
         table_data.append([
             Paragraph(f"<b>{phase_name.upper()}</b>", ParagraphStyle('PhaseHeader', parent=cell_bold, textColor=colors.HexColor('#4d2994'))),
             "", "", ""
@@ -181,8 +196,8 @@ def generate_pdf_report(report_data, fig_force):
             
     t_style = TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f8f6fb')),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-        ('TOPPADDING', (0, 0), (-1, 0), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 4),
+        ('TOPPADDING', (0, 0), (-1, 0), 4),
         ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e5e7eb')),
         ('SPAN', (0, 1), (3, 1)),
@@ -450,7 +465,7 @@ if t is not None and f_total is not None:
     st.plotly_chart(fig_force, use_container_width=True)
 
     # Generate PDF Download Button
-    pdf_bytes = generate_pdf_report(report, fig_force)
+    pdf_bytes = generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, bw)
     st.sidebar.markdown("---")
     st.sidebar.download_button(
         label="📥 Download A4 PDF Report",
@@ -482,7 +497,7 @@ if t is not None and f_total is not None:
     
     st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
 
-    # Download PDF Button under main area as well
+    # Download PDF Button under main area
     st.download_button(
         label="📥 Download A4 PDF Report",
         data=pdf_bytes,
