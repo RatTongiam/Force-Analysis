@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 from scipy.signal import butter, filtfilt
-from scipy.ndimage import label
 
 def butter_lowpass_filter(data, cutoff=10.0, fs=2000.0, order=4):
     nyq = 0.5 * fs
@@ -46,32 +45,42 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples):
     force_sd = np.std(sf[:quiet_samples])
     mass = bw / g
 
-    flight_threshold = 20.0
-    flight_mask = sf < flight_threshold
-    labeled, num_features = label(flight_mask)
+    # --- ROBUST GAP-TOLERANCE FLIGHT PHASE DETECTION ---
+    flight_threshold = 25.0
+    low_force = np.where(sf < flight_threshold)[0]
     
-    if num_features > 0:
-        block_lengths = [np.sum(labeled == i) for i in range(1, num_features + 1)]
-        main_flight_label = np.argmax(block_lengths) + 1
-        flight_indices = np.where(labeled == main_flight_label)[0]
+    if len(low_force) > 0:
+        max_gap = int(0.05 * fs) # Allow up to 50ms noise gap during flight
+        splits = np.where(np.diff(low_force) > max_gap)[0]
+        segments = np.split(low_force, splits + 1)
+        valid_segs = [seg for seg in segments if len(seg) * dt > 0.2] # Flight must be > 0.2s
         
-        tIdx_auto = flight_indices[0]
-        lIdx_auto = flight_indices[-1]
+        if len(valid_segs) > 0:
+            flight_seg = valid_segs[0]
+            tIdx_auto = flight_seg[0]
+            lIdx_auto = flight_seg[-1]
+        else:
+            longest = max(segments, key=len)
+            tIdx_auto = longest[0]
+            lIdx_auto = longest[-1]
     else:
         tIdx_auto = int(n_samples * 0.7)
         lIdx_auto = int(n_samples * 0.8)
 
+    # --- PEAK PROPULSION BEFORE TAKEOFF ---
     prop_search_start = max(0, tIdx_auto - int(1.5 * fs))
     if tIdx_auto > prop_search_start:
         peak_prop_idx = prop_search_start + np.argmax(sf[prop_search_start:tIdx_auto])
     else:
         peak_prop_idx = max(0, tIdx_auto - 1)
 
+    # --- BRAKING MINIMUM FORCE ---
     if peak_prop_idx > prop_search_start:
         bIdx_auto = prop_search_start + np.argmin(sf[prop_search_start:peak_prop_idx])
     else:
         bIdx_auto = max(0, peak_prop_idx - int(0.2 * fs))
 
+    # --- UNWEIGHTING ONSET (BACKWARDS FROM BRAKING MIN FORCE) ---
     threshold_bw = max(bw * 0.975, bw - 5 * force_sd)
     back_search_window = sf[:bIdx_auto]
     bw_crossings = np.where(back_search_window >= threshold_bw)[0]
@@ -81,6 +90,7 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples):
     else:
         sIdx_auto = max(0, bIdx_auto - int(0.4 * fs))
 
+    # --- PROPULSIVE ONSET (V = 0 CROSSING) ---
     vel_temp = np.cumsum((sf[sIdx_auto:tIdx_auto + 1] - bw) / mass) * dt
     b_rel = max(0, bIdx_auto - sIdx_auto)
     zero_crossings = np.where(vel_temp[b_rel:] >= 0)[0]
@@ -89,6 +99,7 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples):
     else:
         zIdx_auto = bIdx_auto
 
+    # Logical Constraints Order Bounding
     tIdx_auto = min(tIdx_auto, n_samples - 1)
     lIdx_auto = min(lIdx_auto, n_samples - 1)
     zIdx_auto = min(zIdx_auto, tIdx_auto)
@@ -134,7 +145,6 @@ def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lId
     rsi_modified = (jh_flight / 100.0) / contraction_time if contraction_time > 0 else 0.0
     peak_v_prop = np.max(vel_total[zIdx:min(tIdx + 1, n_samples)]) if len(vel_total[zIdx:min(tIdx + 1, n_samples)]) > 0 else 0.0
 
-    # Unweighting & Braking
     unweight_fl = sl[sIdx:min(bIdx + 1, n_samples)]
     unweight_fr = sr[sIdx:min(bIdx + 1, n_samples)]
     unweight_impulse = calc_impulse(sf[sIdx:min(bIdx + 1, n_samples)], dt)
@@ -156,12 +166,10 @@ def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lId
     brak_impulse_r = calc_impulse(brak_fr, dt)
     peak_v_neg = np.min(vel_total[sIdx:min(zIdx + 1, n_samples)]) if len(vel_total[sIdx:min(zIdx + 1, n_samples)]) > 0 else 0.0
 
-    # Eccentric Braking RFD
     rfd_brak_tot = (brak_f[-1] - brak_f[0]) / (len(brak_f) * dt) if len(brak_f) > 1 else 0.0
     rfd_brak_l = (brak_fl[-1] - brak_fl[0]) / (len(brak_fl) * dt) if len(brak_fl) > 1 else 0.0
     rfd_brak_r = (brak_fr[-1] - brak_fr[0]) / (len(brak_fr) * dt) if len(brak_fr) > 1 else 0.0
 
-    # Concentric / Propulsive
     prop_f = sf[zIdx:min(tIdx + 1, n_samples)]
     prop_fl = sl[zIdx:min(tIdx + 1, n_samples)]
     prop_fr = sr[zIdx:min(tIdx + 1, n_samples)]
@@ -189,11 +197,9 @@ def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lId
     positive_impulse_l = brak_impulse_l + prop_impulse_l
     positive_impulse_r = brak_impulse_r + prop_impulse_r
 
-    # Time to Peak Force (ms)
     peak_force_idx = np.argmax(sf[sIdx:tIdx + 1]) + sIdx
     time_to_peak_force = (t[peak_force_idx] - t[sIdx]) * 1000.0
 
-    # P1 / P2 Concentric Impulse (0-50ms and 50-100ms)
     idx_50ms = min(n_samples, zIdx + int(0.05 / dt))
     idx_100ms = min(n_samples, zIdx + int(0.10 / dt))
     
