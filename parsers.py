@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import json
 import io
+import re
 
 def parse_tsv(uploaded_file):
     lines = uploaded_file.getvalue().decode('utf-8', errors='ignore').splitlines()
@@ -112,19 +113,45 @@ def parse_qtm_json(uploaded_file):
 
 def parse_single_csv_cforce(uploaded_file):
     uploaded_file.seek(0)
-    df = pd.read_csv(uploaded_file, on_bad_lines='skip')
-    df.columns = [c.strip().lower() for c in df.columns]
+    lines = uploaded_file.getvalue().decode('utf-8', errors='ignore').splitlines()
     
-    time_col = next((c for c in df.columns if 'time' in c or c == 't'), df.columns[0])
-    total_col = next((c for c in df.columns if 'force' in c and 'left' not in c and 'right' not in c), df.columns[1] if len(df.columns) > 1 else None)
-    left_col = next((c for c in df.columns if 'left' in c), df.columns[2] if len(df.columns) > 2 else None)
-    right_col = next((c for c in df.columns if 'right' in c), df.columns[3] if len(df.columns) > 3 else None)
-    
-    t = pd.to_numeric(df[time_col], errors='coerce').fillna(0).values
+    data = []
+    for line in lines[1:]:
+        line_str = line.strip()
+        if not line_str:
+            continue
+        parts = line_str.split(',')
+        if len(parts) >= 4:
+            try:
+                t_val = float(parts[0].strip())
+                
+                def clean_val(val_str):
+                    val_str = val_str.strip()
+                    match = re.findall(r'-?\d+\.?\d*', val_str)
+                    if len(match) == 1:
+                        return float(match[0])
+                    elif len(match) > 1:
+                        # Handle formatting artifacts like "3 481.97" by taking the primary decimal number part
+                        return float("".join(match[1:])) if len(val_str.split()) > 1 else float(match[0])
+                    return 0.0
+
+                f_val = clean_val(parts[1])
+                l_val = clean_val(parts[2])
+                r_val = clean_val(parts[3])
+                
+                data.append([t_val, f_val, l_val, r_val])
+            except Exception:
+                pass
+                
+    if len(data) == 0:
+        return 0.001, np.array([]), np.array([]), np.array([]), np.array([])
+        
+    df = pd.DataFrame(data, columns=['time', 'force', 'left', 'right'])
+    t = df['time'].values.astype(float)
     dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
     
-    f_total = np.abs(pd.to_numeric(df[total_col], errors='coerce').fillna(0).values) if total_col else np.zeros(len(df))
-    f_left = np.abs(pd.to_numeric(df[left_col], errors='coerce').fillna(0).values) if left_col else f_total * 0.5
-    f_right = np.abs(pd.to_numeric(df[right_col], errors='coerce').fillna(0).values) if right_col else f_total * 0.5
+    f_total = np.abs(df['force'].values.astype(float))
+    f_left = np.abs(df['left'].values.astype(float))
+    f_right = np.abs(df['right'].values.astype(float))
     
     return dt, t, f_left, f_right, f_total
