@@ -112,6 +112,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     fig_force.add_vline(x=t_takeoff, line_dash="dot", line_color="#dc2626")
 
     fig_force.update_layout(title="FORCE-TIME ANALYSIS & SUB-PHASES", xaxis_title="Time (s)", yaxis_title="Force (N)", height=420)
+    fig_force.update_xaxes(range=[t[0], t[-1]])
     st.plotly_chart(fig_force, use_container_width=True)
 
     pdf_bytes = generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff)
@@ -126,8 +127,20 @@ if t is not None and f_total is not None and len(f_total) > 0:
     deficits = np.where(sf >= 50, ((sl - sr) / np.maximum(sl, sr)) * 100, 0)
     fig_deficit = go.Figure()
     fig_deficit.add_trace(go.Scatter(x=t, y=deficits, name="Asymmetry", fill='tozeroy', fillcolor='rgba(77, 41, 148, 0.15)', line=dict(color='#4d2994', width=2)))
+    
+    # Highlight sub-phases on Asymmetry plot
+    fig_deficit.add_vrect(x0=t_start, x1=t_braking, fillcolor="yellow", opacity=0.08, line_width=0)
+    fig_deficit.add_vrect(x0=t_braking, x1=t_split, fillcolor="red", opacity=0.08, line_width=0)
+    fig_deficit.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="green", opacity=0.08, line_width=0)
+
+    fig_deficit.add_vline(x=t_start, line_dash="dot", line_color="#ca8a04")
+    fig_deficit.add_vline(x=t_braking, line_dash="dot", line_color="#ef4444")
+    fig_deficit.add_vline(x=t_split, line_dash="dot", line_color="#22c55e")
+    fig_deficit.add_vline(x=t_takeoff, line_dash="dot", line_color="#dc2626")
+
     fig_deficit.add_hrect(y0=-threshold_alert, y1=threshold_alert, fillcolor="rgba(34, 197, 94, 0.15)", line_width=0)
     fig_deficit.update_layout(title="L/R ASYMMETRY % (Threshold Alert)", xaxis_title="Time (s)", yaxis_title="Deficit %", yaxis_range=[-55, 55], height=260)
+    fig_deficit.update_xaxes(range=[t[0], t[-1]])
     st.plotly_chart(fig_deficit, use_container_width=True)
 
     st.markdown("### Standard Biomechanical Analysis Report (Anicic et al., 2023)")
