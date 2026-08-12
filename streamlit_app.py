@@ -3,6 +3,13 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import json
+import io
+
+# ReportLab Imports for PDF Generation
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 st.set_page_config(layout="wide", page_title="Free JumpAnz Team - Prima Motion Tech")
 
@@ -83,6 +90,118 @@ def calc_impulse(arr, dt):
 
 def calc_net_impulse(arr, base, dt):
     return np.sum(arr - base) * dt
+
+# --- PDF GENERATION ENGINE ---
+def generate_pdf_report(report_data, fig_force):
+    pdf_buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        pdf_buffer,
+        pagesize=A4,
+        rightMargin=30,
+        leftMargin=30,
+        topMargin=30,
+        bottomMargin=30
+    )
+    
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'DocTitle',
+        parent=styles['Heading1'],
+        fontName='Helvetica-Bold',
+        fontSize=18,
+        leading=22,
+        textColor=colors.HexColor('#4d2994')
+    )
+    subtitle_style = ParagraphStyle(
+        'DocSubtitle',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=9,
+        leading=12,
+        textColor=colors.HexColor('#1a0f30')
+    )
+    section_style = ParagraphStyle(
+        'SectionHeader',
+        parent=styles['Heading2'],
+        fontName='Helvetica-Bold',
+        fontSize=11,
+        leading=14,
+        textColor=colors.HexColor('#4d2994'),
+        spaceBefore=10,
+        spaceAfter=4
+    )
+    cell_style = ParagraphStyle(
+        'TableCell',
+        parent=styles['Normal'],
+        fontName='Helvetica',
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor('#1a0f30')
+    )
+    cell_bold = ParagraphStyle(
+        'TableCellBold',
+        parent=cell_style,
+        fontName='Helvetica-Bold'
+    )
+    
+    story = []
+    
+    # Header
+    story.append(Paragraph("BIOMECHANICAL ANALYSIS REPORT (CMJ)", title_style))
+    story.append(Paragraph("FREE JUMPANZ TEAM — PRIMA MOTION TECHNOLOGY", subtitle_style))
+    story.append(Spacer(1, 10))
+    
+    # Export Plotly Chart to Image Bytes and Embed into PDF
+    img_bytes = fig_force.to_image(format="png", width=750, height=300, scale=2)
+    img_buffer = io.BytesIO(img_bytes)
+    story.append(Image(img_buffer, width=520, height=208))
+    story.append(Spacer(1, 10))
+    
+    # Metrics Table
+    table_data = [
+        [Paragraph("<b>Biomechanical Metric</b>", cell_bold), 
+         Paragraph("<b>Left</b>", cell_bold), 
+         Paragraph("<b>Right</b>", cell_bold), 
+         Paragraph("<b>TOTAL</b>", cell_bold)]
+    ]
+    
+    for phase_name, metrics in report_data.items():
+        # Phase Sub-header Row
+        table_data.append([
+            Paragraph(f"<b>{phase_name.upper()}</b>", ParagraphStyle('PhaseHeader', parent=cell_bold, textColor=colors.HexColor('#4d2994'))),
+            "", "", ""
+        ])
+        for m_name, vals in metrics.items():
+            table_data.append([
+                Paragraph(m_name, cell_style),
+                Paragraph(str(vals["Left"]), cell_style),
+                Paragraph(str(vals["Right"]), cell_style),
+                Paragraph(f"<b>{vals['Total']}</b>", cell_bold)
+            ])
+            
+    t_style = TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f8f6fb')),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+        ('TOPPADDING', (0, 0), (-1, 0), 6),
+        ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e5e7eb')),
+        ('SPAN', (0, 1), (3, 1)),
+        ('SPAN', (0, 11), (3, 11)),
+        ('SPAN', (0, 18), (3, 18)),
+        ('SPAN', (0, 25), (3, 25)),
+        ('BACKGROUND', (0, 1), (-1, 1), colors.HexColor('#f1ebf9')),
+        ('BACKGROUND', (0, 11), (-1, 11), colors.HexColor('#f1ebf9')),
+        ('BACKGROUND', (0, 18), (-1, 18), colors.HexColor('#f1ebf9')),
+        ('BACKGROUND', (0, 25), (-1, 25), colors.HexColor('#f1ebf9')),
+    ])
+    
+    doc_table = Table(table_data, colWidths=[240, 90, 90, 100])
+    doc_table.setStyle(t_style)
+    story.append(doc_table)
+    
+    doc.build(story)
+    pdf_buffer.seek(0)
+    return pdf_buffer
 
 # Initialize Data Variables
 dt, t, f_left, f_right, f_total = None, None, None, None, None
@@ -330,6 +449,16 @@ if t is not None and f_total is not None:
     fig_force.update_layout(title="FORCE-TIME ANALYSIS & SUB-PHASES", xaxis_title="Time (s)", yaxis_title="Force (N)", height=420)
     st.plotly_chart(fig_force, use_container_width=True)
 
+    # Generate PDF Download Button
+    pdf_bytes = generate_pdf_report(report, fig_force)
+    st.sidebar.markdown("---")
+    st.sidebar.download_button(
+        label="📥 Download A4 PDF Report",
+        data=pdf_bytes,
+        file_name="Prima_Motion_CMJ_Report.pdf",
+        mime="application/pdf"
+    )
+
     # Plot Asymmetry Deficit Chart
     deficits = np.where(sf >= 50, ((sl - sr) / np.maximum(sl, sr)) * 100, 0)
     fig_deficit = go.Figure()
@@ -352,6 +481,15 @@ if t is not None and f_total is not None:
             })
     
     st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
+
+    # Download PDF Button under main area as well
+    st.download_button(
+        label="📥 Download A4 PDF Report",
+        data=pdf_bytes,
+        file_name="Prima_Motion_CMJ_Report.pdf",
+        mime="application/pdf",
+        key="main_download_btn"
+    )
 
 else:
     st.info("Please upload data file(s) to begin analysis.")
