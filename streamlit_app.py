@@ -185,7 +185,7 @@ def calc_deficit_str(val_l, val_r):
         return "-"
 
 # ==============================================================================
-# 3. PDF REPORT GENERATOR
+# 3. PDF REPORT GENERATOR (FIXED MATPLOTLIB ALPHA)
 # ==============================================================================
 
 def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff):
@@ -211,9 +211,9 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
     ax.plot(t, sr, label='Right Limb', color='#f87171', linewidth=1.5)
     ax.plot(t, sf, label='Total Force', color='#4d2994', linewidth=2.5)
 
-    ax.axvspan(t_start, t_braking, color='yellow', opacity=0.15)
-    ax.axvspan(t_braking, t_split, color='red', opacity=0.15)
-    ax.axvspan(t_split, t_takeoff, color='green', opacity=0.15)
+    ax.axvspan(t_start, t_braking, color='yellow', alpha=0.15)
+    ax.axvspan(t_braking, t_split, color='red', alpha=0.15)
+    ax.axvspan(t_split, t_takeoff, color='green', alpha=0.15)
 
     ax.axvline(t_start, color='#ca8a04', linestyle='--', linewidth=1)
     ax.axvline(t_braking, color='#ef4444', linestyle='--', linewidth=1)
@@ -543,7 +543,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
 
     fig_force.add_annotation(x=t_start + (t_braking - t_start)/2, y=max_f * 1.05, text="UNWEIGHTING", showarrow=False, font=dict(color='#ca8a04', size=10))
     fig_force.add_annotation(x=t_braking + (t_split - t_braking)/2, y=max_f * 1.18, text="BRAKING", showarrow=False, font=dict(color='#ef4444', size=10))
-    fig_force.add_annotation(x=t_split + (t_takeoff - t_split)/2, y=max_f * 1.05, text="PROPULSIVE", showarrow=False, font=dict(color='#ca8a04', size=10))
+    fig_force.add_annotation(x=t_split + (t_takeoff - t_split)/2, y=max_f * 1.05, text="PROPULSIVE", showarrow=False, font=dict(color='#22c55e', size=10))
 
     fig_force.update_layout(title="FORCE-TIME ANALYSIS & SUB-PHASES", xaxis_title="Time (s)", yaxis_title="Force (N)", height=420)
     st.plotly_chart(fig_force, use_container_width=True)
