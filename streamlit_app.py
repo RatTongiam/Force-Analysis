@@ -2,15 +2,14 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import matplotlib.pyplot as plt
 import json
 import io
 
-# ReportLab Imports for PDF Generation
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+import matplotlib.pyplot as plt
 
 st.set_page_config(layout="wide", page_title="Free JumpAnz Team - Prima Motion Tech")
 
@@ -20,7 +19,12 @@ st.caption("PRIMA MOTION TECHNOLOGY — Technology that unlocks scientific insig
 # --- SIDEBAR: FILE IMPORT & CONTROL ---
 st.sidebar.header("Data Import & Settings")
 
-data_mode = st.sidebar.radio("Select Input Mode", ["Dual TSV (Plate A + B)", "Single JSON (QTM)", "Single CSV"])
+data_mode = st.sidebar.radio("Select Input Mode", [
+    "Dual TSV (Plate A + B)", 
+    "VALD ForceDecks (CSV/TSV)", 
+    "Single JSON (QTM)", 
+    "Single CSV"
+])
 
 filter_size = st.sidebar.selectbox("Smoothing Filter", [1, 7, 15, 31], index=2)
 threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
@@ -50,6 +54,73 @@ def parse_tsv(uploaded_file):
             except ValueError:
                 pass
     return freq, np.array(data)
+
+def parse_vald_forcedecks(uploaded_file):
+    """
+    Parser for VALD ForceDecks CSV/TSV Export files.
+    Extracts Time, Left Force, Right Force, and Total Force.
+    """
+    # Detect delimiter
+    filename = uploaded_file.name.lower()
+    sep = '\t' if filename.endswith('.tsv') else ','
+    
+    # Try reading header
+    df = pd.read_csv(uploaded_file, sep=sep)
+    
+    # Normalize column names to lowercase for searching
+    col_map = {str(c).strip().lower(): c for c in df.columns}
+    
+    # Find Time Column
+    time_col = None
+    for k in ['time', 'time (s)', 'time(s)', 'times']:
+        if k in col_map:
+            time_col = col_map[k]
+            break
+            
+    # Find Left Column
+    left_col = None
+    for k in ['left force', 'left (n)', 'left force (n)', 'left_force', 'left']:
+        if k in col_map:
+            left_col = col_map[k]
+            break
+            
+    # Find Right Column
+    right_col = None
+    for k in ['right force', 'right (n)', 'right force (n)', 'right_force', 'right']:
+        if k in col_map:
+            right_col = col_map[k]
+            break
+
+    # Find Total Force Column
+    total_col = None
+    for k in ['force', 'total force (n)', 'total force', 'vertical force', 'force (n)']:
+        if k in col_map:
+            total_col = col_map[k]
+            break
+
+    # Extract numerical arrays
+    if time_col is not None:
+        t = df[time_col].values.astype(float)
+        dt = t[1] - t[0] if len(t) > 1 else 0.001
+    else:
+        dt = 0.001 # Default 1000 Hz if time column missing
+        t = np.arange(len(df)) * dt
+
+    f_left = df[left_col].values.astype(float) if left_col else None
+    f_right = df[right_col].values.astype(float) if right_col else None
+    f_total = df[total_col].values.astype(float) if total_col else None
+
+    if f_total is None and f_left is not None and f_right is not None:
+        f_total = f_left + f_right
+    elif f_left is None and f_total is not None and f_right is not None:
+        f_left = f_total - f_right
+    elif f_right is None and f_total is not None and f_left is not None:
+        f_right = f_total - f_left
+    elif f_left is None and f_right is None and f_total is not None:
+        f_left = f_total * 0.5
+        f_right = f_total * 0.5
+
+    return dt, t, np.abs(f_left), np.abs(f_right), np.abs(f_total)
 
 def parse_qtm_json(uploaded_file):
     content = json.load(uploaded_file)
@@ -92,63 +163,28 @@ def calc_impulse(arr, dt):
 def calc_net_impulse(arr, base, dt):
     return np.sum(arr - base) * dt
 
-# --- PDF GENERATION ENGINE USING MATPLOTLIB FOR CHART ---
+# PDF Generation Engine
 def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, bw):
     pdf_buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        pdf_buffer,
-        pagesize=A4,
-        rightMargin=30,
-        leftMargin=30,
-        topMargin=30,
-        bottomMargin=30
-    )
+    doc = SimpleDocTemplate(pdf_buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle(
-        'DocTitle',
-        parent=styles['Heading1'],
-        fontName='Helvetica-Bold',
-        fontSize=18,
-        leading=22,
-        textColor=colors.HexColor('#4d2994')
-    )
-    subtitle_style = ParagraphStyle(
-        'DocSubtitle',
-        parent=styles['Normal'],
-        fontName='Helvetica-Bold',
-        fontSize=9,
-        leading=12,
-        textColor=colors.HexColor('#1a0f30')
-    )
-    cell_style = ParagraphStyle(
-        'TableCell',
-        parent=styles['Normal'],
-        fontName='Helvetica',
-        fontSize=8,
-        leading=10,
-        textColor=colors.HexColor('#1a0f30')
-    )
-    cell_bold = ParagraphStyle(
-        'TableCellBold',
-        parent=cell_style,
-        fontName='Helvetica-Bold'
-    )
+    title_style = ParagraphStyle('DocTitle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=18, leading=22, textColor=colors.HexColor('#4d2994'))
+    subtitle_style = ParagraphStyle('DocSubtitle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, leading=12, textColor=colors.HexColor('#1a0f30'))
+    cell_style = ParagraphStyle('TableCell', parent=styles['Normal'], fontName='Helvetica', fontSize=8, leading=10, textColor=colors.HexColor('#1a0f30'))
+    cell_bold = ParagraphStyle('TableCellBold', parent=cell_style, fontName='Helvetica-Bold')
     
-    story = []
+    story = [
+        Paragraph("BIOMECHANICAL ANALYSIS REPORT (CMJ)", title_style),
+        Paragraph("FREE JUMPANZ TEAM — PRIMA MOTION TECHNOLOGY", subtitle_style),
+        Spacer(1, 10)
+    ]
     
-    # Header
-    story.append(Paragraph("BIOMECHANICAL ANALYSIS REPORT (CMJ)", title_style))
-    story.append(Paragraph("FREE JUMPANZ TEAM — PRIMA MOTION TECHNOLOGY", subtitle_style))
-    story.append(Spacer(1, 10))
-    
-    # Generate Chart PNG via Matplotlib
     fig_plt, ax = plt.subplots(figsize=(8, 3.2), dpi=200)
     ax.plot(t, sl, label='Left Limb', color='#818cf8', linewidth=1.5)
     ax.plot(t, sr, label='Right Limb', color='#f87171', linewidth=1.5)
     ax.plot(t, sf, label='Total Force', color='#4d2994', linewidth=2.5)
 
-    max_f = np.max(sf)
     ax.axvspan(t_start, t_braking, color='yellow', alpha=0.15)
     ax.axvspan(t_braking, t_split, color='red', alpha=0.15)
     ax.axvspan(t_split, t_takeoff, color='green', alpha=0.15)
@@ -173,13 +209,12 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
     story.append(Image(img_buffer, width=520, height=208))
     story.append(Spacer(1, 10))
     
-    # Metrics Table
-    table_data = [
-        [Paragraph("<b>Biomechanical Metric</b>", cell_bold), 
-         Paragraph("<b>Left</b>", cell_bold), 
-         Paragraph("<b>Right</b>", cell_bold), 
-         Paragraph("<b>TOTAL</b>", cell_bold)]
-    ]
+    table_data = [[
+        Paragraph("<b>Biomechanical Metric</b>", cell_bold), 
+        Paragraph("<b>Left</b>", cell_bold), 
+        Paragraph("<b>Right</b>", cell_bold), 
+        Paragraph("<b>TOTAL</b>", cell_bold)
+    ]]
     
     for phase_name, metrics in report_data.items():
         table_data.append([
@@ -239,6 +274,14 @@ if data_mode == "Dual TSV (Plate A + B)":
         f_left = fz_a if side_a == "left" else fz_b
         f_right = fz_b if side_a == "left" else fz_a
         f_total = f_left + f_right
+
+elif data_mode == "VALD ForceDecks (CSV/TSV)":
+    file_vald = st.sidebar.file_uploader("Upload VALD ForceDecks File (.csv / .tsv)", type=["csv", "tsv"])
+    if file_vald:
+        try:
+            dt, t, f_left, f_right, f_total = parse_vald_forcedecks(file_vald)
+        except Exception as e:
+            st.error(f"Error parsing VALD ForceDecks file: {e}")
 
 elif data_mode == "Single JSON (QTM)":
     file_json = st.sidebar.file_uploader("Upload QTM JSON File (.json)", type=["json"])
