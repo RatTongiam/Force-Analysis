@@ -50,7 +50,7 @@ def parse_tsv(uploaded_file):
                     freq = float(parts[1])
                 except ValueError:
                     pass
-        
+            continue
         parts = line_str.split('\t')
         if len(parts) >= 3 and not line_str.startswith("FORCE_PLATE"):
             try:
@@ -62,12 +62,6 @@ def parse_tsv(uploaded_file):
     return freq, np.array(data)
 
 def parse_vald_forcedecks_exact(uploaded_file):
-    """
-    Exact Parser for VALD ForceDecks CSV/TSV Export files:
-    - Reads starting from Row 11 (skiprows=10)
-    - Col A [0] = Time, Col B [1] = Left Force Fz, Col E [4] = Right Force Fz
-    - Applies Flight Phase Zero-Offset Correction
-    """
     filename = uploaded_file.name.lower()
     sep = '\t' if filename.endswith('.tsv') else ','
     
@@ -81,34 +75,10 @@ def parse_vald_forcedecks_exact(uploaded_file):
     f_left = np.abs(df.iloc[:, 1].values.astype(float)) if df.shape[1] > 1 else np.zeros(len(df))
     f_right = np.abs(df.iloc[:, 4].values.astype(float)) if df.shape[1] > 4 else f_left
     f_total = f_left + f_right
-
-    # Flight Phase Zero-Offset Calibration
-    if len(f_total) > 200:
-        quiet_samples = max(1, int(0.5 / dt))
-        peak_idx = quiet_samples + np.argmax(f_total[quiet_samples:])
-        
-        if peak_idx + 50 < len(f_total):
-            flight_search_window = f_total[peak_idx:]
-            min_flight_idx = peak_idx + np.argmin(flight_search_window)
-            
-            win_start = max(0, min_flight_idx - int(0.025 / dt))
-            win_end = min(len(f_total), min_flight_idx + int(0.025 / dt))
-            
-            offset_l = np.mean(f_left[win_start:win_end])
-            offset_r = np.mean(f_right[win_start:win_end])
-            
-            if offset_l > 2.0:
-                f_left = np.maximum(0.0, f_left - offset_l)
-            if offset_r > 2.0:
-                f_right = np.maximum(0.0, f_right - offset_r)
-            f_total = f_left + f_right
-
+    
     return dt, t, f_left, f_right, f_total
 
 def parse_qtm_json(uploaded_file):
-    """
-    QTM JSON Parser with Force Unit Conversion (mN to N).
-    """
     content = json.load(uploaded_file)
     root = content[0] if isinstance(content, list) else content
     
@@ -133,7 +103,7 @@ def parse_qtm_json(uploaded_file):
         
     t = np.arange(num_frames) * dt
     
-    # Unit Scale Fix: Convert mN to N
+    # QTM Unit Scale Fix (mN -> N)
     f_left = f_left / 1000.0
     f_right = f_right / 1000.0
     f_total = f_left + f_right
@@ -174,7 +144,7 @@ def calc_deficit_str(val_l, val_r):
 # 3. PDF REPORT GENERATOR
 # ==============================================================================
 
-def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, bw):
+def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff):
     pdf_buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         pdf_buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30
@@ -268,7 +238,7 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
     return pdf_buffer
 
 # ==============================================================================
-# 4. MAIN DATA EXECUTION FLOW
+# 4. MAIN EXECUTION FLOW
 # ==============================================================================
 
 dt, t, f_left, f_right, f_total = None, None, None, None, None
@@ -319,10 +289,22 @@ elif data_mode == "Single CSV":
             f_total = f_left + f_right
 
 # ==============================================================================
-# 5. CORE ANALYSIS & REPORT RENDER
+# 5. CORE ANALYSIS & REPORT RENDERING
 # ==============================================================================
 
 if t is not None and f_total is not None and len(f_total) > 0:
+    
+    # --- GLOBAL ZERO-OFFSET CALIBRATION ---
+    # Correct un-tared plates by finding global minimum during flight phase
+    min_f_total = np.min(f_total)
+    if 2.0 < min_f_total < 100.0:
+        min_idx = np.argmin(f_total)
+        offset_l = f_left[min_idx]
+        offset_r = f_right[min_idx]
+        f_left = np.maximum(0.0, f_left - offset_l)
+        f_right = np.maximum(0.0, f_right - offset_r)
+        f_total = f_left + f_right
+
     sf = moving_average(f_total, filter_size)
     sl = moving_average(f_left, filter_size)
     sr = moving_average(f_right, filter_size)
@@ -340,7 +322,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     mass_left = bw_left / g if bw_left > 0 else mass * 0.5
     mass_right = bw_right / g if bw_right > 0 else mass * 0.5
     
-    # Sub-phase Boundaries Detection
+    # Phase Detection
     flight_threshold = 30.0
     flight_indices = np.where(sf < flight_threshold)[0]
     tIdx_auto = flight_indices[0] if len(flight_indices) > 0 else n_samples - 1
@@ -362,9 +344,9 @@ if t is not None and f_total is not None and len(f_total) > 0:
     peak_force_idx = sIdx_auto + np.argmax(sf[sIdx_auto:tIdx_auto + 1])
     peak_force_idx = min(peak_force_idx, n_samples - 1)
     
-    unweight_slice = sf[sIdx_auto:peak_force_idx]
-    if len(unweight_slice) > 0:
-        min_force_idx = sIdx_auto + np.argmin(unweight_slice)
+    # Safe boundary check to prevent argmin ValueError
+    if peak_force_idx > sIdx_auto:
+        min_force_idx = sIdx_auto + np.argmin(sf[sIdx_auto:peak_force_idx])
     else:
         min_force_idx = sIdx_auto
 
@@ -383,7 +365,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     t_split = st.sidebar.slider("Propulsive Onset (V=0)", 0.0, float(t[-1]), float(t[zIdx_auto]), step=0.005)
     t_takeoff = st.sidebar.slider("Take-off", 0.0, float(t[-1]), float(t[tIdx_auto]), step=0.005)
 
-    # Safe Boundary Array Index Bounding
+    # Convert UI times to secure indices
     sIdx = min(max(0, int(round(t_start / dt))), n_samples - 1)
     bIdx = min(max(0, int(round(t_braking / dt))), n_samples - 1)
     zIdx = min(max(0, int(round(t_split / dt))), n_samples - 1)
@@ -393,6 +375,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     lIdx = lIdx_matches[0] if len(lIdx_matches) > 0 else n_samples - 1
     lIdx = min(lIdx, n_samples - 1)
 
+    # Integration
     vel_total = np.zeros(n_samples)
     vel_l = np.zeros(n_samples)
     vel_r = np.zeros(n_samples)
@@ -442,7 +425,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
     brak_impulse = calc_impulse(brak_f, dt)
     brak_impulse_l = calc_impulse(brak_fl, dt)
     brak_impulse_r = calc_impulse(brak_fr, dt)
-    brak_net_impulse = calc_net_impulse(brak_f, bw, dt)
 
     prop_f = sf[zIdx:min(tIdx + 1, n_samples)]
     prop_fl = sl[zIdx:min(tIdx + 1, n_samples)]
@@ -464,7 +446,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
     prop_impulse = calc_impulse(prop_f, dt)
     prop_impulse_l = calc_impulse(prop_fl, dt)
     prop_impulse_r = calc_impulse(prop_fr, dt)
-    prop_net_impulse = calc_net_impulse(prop_f, bw, dt)
     positive_impulse = brak_impulse + prop_impulse
 
     land_impulse = 0.0
@@ -534,7 +515,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     fig_force.update_layout(title="FORCE-TIME ANALYSIS & SUB-PHASES", xaxis_title="Time (s)", yaxis_title="Force (N)", height=420)
     st.plotly_chart(fig_force, use_container_width=True)
 
-    pdf_bytes = generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, bw)
+    pdf_bytes = generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff)
     st.sidebar.markdown("---")
     st.sidebar.download_button(
         label="📥 Download A4 PDF Report",
