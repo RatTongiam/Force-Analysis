@@ -4,10 +4,6 @@ from scipy.signal import butter, filtfilt
 from scipy.ndimage import label
 
 def butter_lowpass_filter(data, cutoff=10.0, fs=2000.0, order=4):
-    """
-    Standard Biomechanical 4th-order Zero-Lag Low-Pass Butterworth Filter
-    (Anicic et al., 2023 / Street et al., 2018)
-    """
     nyq = 0.5 * fs
     normal_cutoff = cutoff / nyq
     if normal_cutoff >= 1.0:
@@ -44,14 +40,12 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples):
     fs = 1.0 / dt
     g = 9.80665
 
-    # --- 1. FILTER RAW SIGNAL WITH 10Hz BUTTERWORTH FILTER ---
     sf = butter_lowpass_filter(sf_raw, cutoff=10.0, fs=fs, order=4)
     
     bw = np.mean(sf[:quiet_samples])
     force_sd = np.std(sf[:quiet_samples])
     mass = bw / g
 
-    # --- 2. ANCHOR: MAIN AIRBORNE FLIGHT PHASE ---
     flight_threshold = 20.0
     flight_mask = sf < flight_threshold
     labeled, num_features = label(flight_mask)
@@ -61,26 +55,23 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples):
         main_flight_label = np.argmax(block_lengths) + 1
         flight_indices = np.where(labeled == main_flight_label)[0]
         
-        tIdx_auto = flight_indices[0]  # Take-off
-        lIdx_auto = flight_indices[-1] # Landing
+        tIdx_auto = flight_indices[0]
+        lIdx_auto = flight_indices[-1]
     else:
         tIdx_auto = int(n_samples * 0.7)
         lIdx_auto = int(n_samples * 0.8)
 
-    # --- 3. PEAK PROPULSION BEFORE TAKEOFF ---
     prop_search_start = max(0, tIdx_auto - int(1.5 * fs))
     if tIdx_auto > prop_search_start:
         peak_prop_idx = prop_search_start + np.argmax(sf[prop_search_start:tIdx_auto])
     else:
         peak_prop_idx = max(0, tIdx_auto - 1)
 
-    # --- 4. BRAKING MINIMUM FORCE ---
     if peak_prop_idx > prop_search_start:
         bIdx_auto = prop_search_start + np.argmin(sf[prop_search_start:peak_prop_idx])
     else:
         bIdx_auto = max(0, peak_prop_idx - int(0.2 * fs))
 
-    # --- 5. UNWEIGHTING ONSET (BACKWARDS FROM BRAKING MIN FORCE) ---
     threshold_bw = max(bw * 0.975, bw - 5 * force_sd)
     back_search_window = sf[:bIdx_auto]
     bw_crossings = np.where(back_search_window >= threshold_bw)[0]
@@ -90,7 +81,6 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples):
     else:
         sIdx_auto = max(0, bIdx_auto - int(0.4 * fs))
 
-    # --- 6. PROPULSIVE ONSET (V = 0 CROSSING) ---
     vel_temp = np.cumsum((sf[sIdx_auto:tIdx_auto + 1] - bw) / mass) * dt
     b_rel = max(0, bIdx_auto - sIdx_auto)
     zero_crossings = np.where(vel_temp[b_rel:] >= 0)[0]
@@ -99,7 +89,6 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples):
     else:
         zIdx_auto = bIdx_auto
 
-    # Logical Constraints Order Bounding
     tIdx_auto = min(tIdx_auto, n_samples - 1)
     lIdx_auto = min(lIdx_auto, n_samples - 1)
     zIdx_auto = min(zIdx_auto, tIdx_auto)
@@ -148,12 +137,18 @@ def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lId
     peak_v_prop = np.max(vel_total[zIdx:min(tIdx + 1, n_samples)]) if len(vel_total[zIdx:min(tIdx + 1, n_samples)]) > 0 else 0.0
 
     unweight_f = sf[sIdx:min(bIdx + 1, n_samples)]
+    unweight_fl = sl[sIdx:min(bIdx + 1, n_samples)]
+    unweight_fr = sr[sIdx:min(bIdx + 1, n_samples)]
+    
     unweight_impulse = calc_impulse(unweight_f, dt)
+    unweight_impulse_l = calc_impulse(unweight_fl, dt)
+    unweight_impulse_r = calc_impulse(unweight_fr, dt)
 
     brak_f = sf[bIdx:min(zIdx + 1, n_samples)]
     brak_fl = sl[bIdx:min(zIdx + 1, n_samples)]
     brak_fr = sr[bIdx:min(zIdx + 1, n_samples)]
-    brak_p = brak_f * vel_total[bIdx:min(zIdx + 1, n_samples)]
+    brak_v = vel_total[bIdx:min(zIdx + 1, n_samples)]
+    brak_p = brak_f * brak_v
 
     avg_brak_fl = calc_avg(brak_fl)
     avg_brak_fr = calc_avg(brak_fr)
@@ -186,7 +181,10 @@ def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lId
     prop_impulse = calc_impulse(prop_f, dt)
     prop_impulse_l = calc_impulse(prop_fl, dt)
     prop_impulse_r = calc_impulse(prop_fr, dt)
+    
     positive_impulse = brak_impulse + prop_impulse
+    positive_impulse_l = brak_impulse_l + prop_impulse_l
+    positive_impulse_r = brak_impulse_r + prop_impulse_r
 
     land_impulse = land_impulse_l = land_impulse_r = 0.0
     if lIdx > tIdx and lIdx < n_samples:
@@ -212,14 +210,14 @@ def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lId
             "Peak Propulsive Power (W)": {"Left": "-", "Right": "-", "Total": f"{peak_prop_p:.0f}", "Deficit": "-"},
             "Mean Propulsive Power (W)": {"Left": "-", "Right": "-", "Total": f"{avg_prop_p:.0f}", "Deficit": "-"},
             "Propulsive Impulse (N·s)": {"Left": f"{prop_impulse_l:.0f}", "Right": f"{prop_impulse_r:.0f}", "Total": f"{prop_impulse:.0f}", "Deficit": calc_deficit_str(prop_impulse_l, prop_impulse_r)},
-            "Positive Impulse (N·s)": {"Left": "-", "Right": "-", "Total": f"{positive_impulse:.0f}", "Deficit": "-"},
+            "Positive Impulse (N·s)": {"Left": f"{positive_impulse_l:.0f}", "Right": f"{positive_impulse_r:.0f}", "Total": f"{positive_impulse:.0f}", "Deficit": calc_deficit_str(positive_impulse_l, positive_impulse_r)},
             "COM Height at Take-off (cm)": {"Left": "-", "Right": "-", "Total": f"{com_takeoff:.1f}", "Deficit": "-"}
         },
         "2. Eccentric Component (16% Variance)": {
             "Mean Force during Braking Phase (N)": {"Left": f"{avg_brak_fl:.0f}", "Right": f"{avg_brak_fr:.0f}", "Total": f"{avg_brak_f:.0f}", "Deficit": calc_deficit_str(avg_brak_fl, avg_brak_fr)},
             "Braking Impulse (N·s)": {"Left": f"{brak_impulse_l:.0f}", "Right": f"{brak_impulse_r:.0f}", "Total": f"{brak_impulse:.0f}", "Deficit": calc_deficit_str(brak_impulse_l, brak_impulse_r)},
             "Mean Power during Braking Phase (W)": {"Left": "-", "Right": "-", "Total": f"{abs(avg_brak_p):.0f}", "Deficit": "-"},
-            "Unloading Impulse (N·s)": {"Left": "-", "Right": "-", "Total": f"{unweight_impulse:.0f}", "Deficit": "-"},
+            "Unloading Impulse (N·s)": {"Left": f"{unweight_impulse_l:.0f}", "Right": f"{unweight_impulse_r:.0f}", "Total": f"{unweight_impulse:.0f}", "Deficit": calc_deficit_str(unweight_impulse_l, unweight_impulse_r)},
             "Peak Negative Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{peak_v_neg:.2f}", "Deficit": "-"}
         },
         "3. Concentric Component (11% Variance)": {
