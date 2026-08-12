@@ -32,7 +32,7 @@ filter_size = st.sidebar.selectbox("Smoothing Filter", [1, 7, 15, 31], index=2)
 threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
 
 # ==============================================================================
-# 1. ROBUST PARSER ENGINES (MANIPULATE EACH FORMAT ACCORDINGLY)
+# 1. ROBUST PARSER ENGINES (CORRECTED TSV DT UNPACKING)
 # ==============================================================================
 
 def parse_tsv(uploaded_file):
@@ -60,23 +60,13 @@ def parse_tsv(uploaded_file):
                 pass
     dt = 1.0 / freq
     arr = np.array(data)
-    if len(arr) == 0:
-        return 0.001, np.array([]), np.array([]), np.array([]), np.array([])
-    t = np.arange(len(arr)) * dt
-    f_left = np.abs(arr[:, 0]) if arr.shape[1] > 0 else np.zeros(len(arr))
-    f_right = np.abs(arr[:, 1]) if arr.shape[1] > 1 else f_left
-    f_total = np.abs(arr[:, 2]) if arr.shape[1] > 2 else (f_left + f_right)
-    return dt, t, f_left, f_right, f_total
+    return dt, arr
 
 def parse_vald_forcedecks_exact(uploaded_file):
-    """
-    Robust Parser for VALD ForceDecks (supports both old and new ForceDecks Raw Data Export formats).
-    """
     uploaded_file.seek(0)
     raw_text = uploaded_file.getvalue().decode('utf-8', errors='ignore')
     lines = raw_text.splitlines()
     
-    # Check if new format containing 'Time' and 'Z Left'
     header_idx = 0
     is_new_format = False
     for idx, line in enumerate(lines[:30]):
@@ -100,7 +90,6 @@ def parse_vald_forcedecks_exact(uploaded_file):
         f_total = f_left + f_right
         return dt, t, f_left, f_right, f_total
     else:
-        # Fallback to old format (skiprows=10, Col B [1] & Col E [4])
         filename = uploaded_file.name.lower()
         sep = '\t' if filename.endswith('.tsv') else ','
         df = pd.read_csv(io.StringIO(raw_text), skiprows=10, header=None, sep=sep, on_bad_lines='skip')
@@ -139,7 +128,6 @@ def parse_qtm_json(uploaded_file):
         f_right = np.abs(vals[:num_frames, 2]) * 0.5
         
     t = np.arange(num_frames) * dt
-    # QTM Force Unit Scale Fix (mN -> N)
     f_left = f_left / 1000.0
     f_right = f_right / 1000.0
     f_total = f_left + f_right
