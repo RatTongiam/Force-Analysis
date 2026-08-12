@@ -66,31 +66,36 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
             "", "", "", ""
         ])
         for m_name, vals in metrics.items():
+            l_val = str(vals.get("Left", "-"))
+            r_val = str(vals.get("Right", "-"))
+            tot_val = str(vals.get("Total", "-"))
+            def_val = str(vals.get("Deficit", "-"))
+            
             table_data.append([
                 Paragraph(m_name, cell_style),
-                Paragraph(str(vals["Left"]), cell_style),
-                Paragraph(str(vals["Right"]), cell_style),
-                Paragraph(f"<b>{vals['Total']}</b>", cell_bold),
-                Paragraph(str(vals["Deficit"]), cell_style)
+                Paragraph(l_val, cell_style),
+                Paragraph(r_val, cell_style),
+                Paragraph(f"<b>{tot_val}</b>", cell_bold),
+                Paragraph(def_val, cell_style)
             ])
             
     t_style = TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f8f6fb')),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 3),
-        ('TOPPADDING', (0, 0), (-1, 0), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 2),
+        ('TOPPADDING', (0, 0), (-1, 0), 2),
         ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e5e7eb')),
         ('SPAN', (0, 1), (4, 1)),
-        ('SPAN', (0, 12), (4, 12)),
-        ('SPAN', (0, 18), (4, 18)),
-        ('SPAN', (0, 23), (4, 23)),
+        ('SPAN', (0, 14), (4, 14)),
+        ('SPAN', (0, 20), (4, 20)),
+        ('SPAN', (0, 24), (4, 24)),
         ('BACKGROUND', (0, 1), (-1, 1), colors.HexColor('#f1ebf9')),
-        ('BACKGROUND', (0, 12), (-1, 12), colors.HexColor('#f1ebf9')),
-        ('BACKGROUND', (0, 18), (-1, 18), colors.HexColor('#f1ebf9')),
-        ('BACKGROUND', (0, 23), (-1, 23), colors.HexColor('#f1ebf9')),
+        ('BACKGROUND', (0, 14), (-1, 14), colors.HexColor('#f1ebf9')),
+        ('BACKGROUND', (0, 20), (-1, 20), colors.HexColor('#f1ebf9')),
+        ('BACKGROUND', (0, 24), (-1, 24), colors.HexColor('#f1ebf9')),
     ])
     
-    doc_table = Table(table_data, colWidths=[200, 75, 75, 85, 85])
+    doc_table = Table(table_data, colWidths=[190, 75, 75, 90, 90])
     doc_table.setStyle(t_style)
     story.append(doc_table)
     
