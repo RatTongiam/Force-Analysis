@@ -31,7 +31,7 @@ filter_size = st.sidebar.selectbox("Smoothing Filter", [1, 7, 15, 31], index=2)
 threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
 
 # ==============================================================================
-# 1. PARSER ENGINES
+# 1. PARSER ENGINES (PURE NO-OFFSET)
 # ==============================================================================
 
 def parse_tsv(uploaded_file):
@@ -101,9 +101,10 @@ def parse_qtm_json(uploaded_file):
         f_left = np.abs(vals[:num_frames, 2]) * 0.5
         f_right = np.abs(vals[:num_frames, 2]) * 0.5
         
+    # Correct QTM Time Scaling (seconds = frame_index * dt)
     t = np.arange(num_frames) * dt
     
-    # QTM Unit Scale Fix (mN -> N)
+    # QTM Force Unit Scale Fix (mN -> N)
     f_left = f_left / 1000.0
     f_right = f_right / 1000.0
     f_total = f_left + f_right
@@ -294,17 +295,6 @@ elif data_mode == "Single CSV":
 
 if t is not None and f_total is not None and len(f_total) > 0:
     
-    # --- GLOBAL ZERO-OFFSET CALIBRATION ---
-    # Correct un-tared plates by finding global minimum during flight phase
-    min_f_total = np.min(f_total)
-    if 2.0 < min_f_total < 100.0:
-        min_idx = np.argmin(f_total)
-        offset_l = f_left[min_idx]
-        offset_r = f_right[min_idx]
-        f_left = np.maximum(0.0, f_left - offset_l)
-        f_right = np.maximum(0.0, f_right - offset_r)
-        f_total = f_left + f_right
-
     sf = moving_average(f_total, filter_size)
     sl = moving_average(f_left, filter_size)
     sr = moving_average(f_right, filter_size)
@@ -322,7 +312,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     mass_left = bw_left / g if bw_left > 0 else mass * 0.5
     mass_right = bw_right / g if bw_right > 0 else mass * 0.5
     
-    # Phase Detection
+    # Robust Sub-phase Detection
     flight_threshold = 30.0
     flight_indices = np.where(sf < flight_threshold)[0]
     tIdx_auto = flight_indices[0] if len(flight_indices) > 0 else n_samples - 1
@@ -344,7 +334,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
     peak_force_idx = sIdx_auto + np.argmax(sf[sIdx_auto:tIdx_auto + 1])
     peak_force_idx = min(peak_force_idx, n_samples - 1)
     
-    # Safe boundary check to prevent argmin ValueError
     if peak_force_idx > sIdx_auto:
         min_force_idx = sIdx_auto + np.argmin(sf[sIdx_auto:peak_force_idx])
     else:
