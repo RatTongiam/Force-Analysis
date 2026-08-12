@@ -31,7 +31,7 @@ filter_size = st.sidebar.selectbox("Smoothing Filter", [1, 7, 15, 31], index=2)
 threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
 
 # ==============================================================================
-# 1. PARSER ENGINES (PURE NO-OFFSET)
+# 1. PARSER ENGINES (SECURE TIME SCALING)
 # ==============================================================================
 
 def parse_tsv(uploaded_file):
@@ -59,7 +59,9 @@ def parse_tsv(uploaded_file):
             except ValueError:
                 pass
 
-    return freq, np.array(data)
+    dt = 1.0 / freq
+    data_arr = np.array(data)
+    return dt, data_arr
 
 def parse_vald_forcedecks_exact(uploaded_file):
     filename = uploaded_file.name.lower()
@@ -70,6 +72,10 @@ def parse_vald_forcedecks_exact(uploaded_file):
     df = df.apply(pd.to_numeric, errors='coerce').dropna(how='all')
     
     t = df.iloc[:, 0].values.astype(float) if df.shape[1] > 0 else np.arange(len(df)) * 0.001
+    # Force time to start at 0.0 if starts with large timestamp
+    if len(t) > 0 and t[0] > 10.0:
+        t = t - t[0]
+        
     dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
     
     f_left = np.abs(df.iloc[:, 1].values.astype(float)) if df.shape[1] > 1 else np.zeros(len(df))
@@ -101,7 +107,7 @@ def parse_qtm_json(uploaded_file):
         f_left = np.abs(vals[:num_frames, 2]) * 0.5
         f_right = np.abs(vals[:num_frames, 2]) * 0.5
         
-    # Correct QTM Time Scaling (seconds = frame_index * dt)
+    # Strictly generate time in seconds (frame index * dt)
     t = np.arange(num_frames) * dt
     
     # QTM Force Unit Scale Fix (mN -> N)
@@ -142,7 +148,7 @@ def calc_deficit_str(val_l, val_r):
         return "-"
 
 # ==============================================================================
-# 3. PDF REPORT GENERATOR
+# 3. PDF REPORT GENERATOR (RELIABLE METRICS ACCORDING TO ANICIC ET AL., 2023)
 # ==============================================================================
 
 def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff):
@@ -221,13 +227,13 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
         ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e5e7eb')),
         ('SPAN', (0, 1), (4, 1)),
-        ('SPAN', (0, 11), (4, 11)),
+        ('SPAN', (0, 12), (4, 12)),
         ('SPAN', (0, 18), (4, 18)),
-        ('SPAN', (0, 25), (4, 25)),
+        ('SPAN', (0, 23), (4, 23)),
         ('BACKGROUND', (0, 1), (-1, 1), colors.HexColor('#f1ebf9')),
-        ('BACKGROUND', (0, 11), (-1, 11), colors.HexColor('#f1ebf9')),
+        ('BACKGROUND', (0, 12), (-1, 12), colors.HexColor('#f1ebf9')),
         ('BACKGROUND', (0, 18), (-1, 18), colors.HexColor('#f1ebf9')),
-        ('BACKGROUND', (0, 25), (-1, 25), colors.HexColor('#f1ebf9')),
+        ('BACKGROUND', (0, 23), (-1, 23), colors.HexColor('#f1ebf9')),
     ])
     
     doc_table = Table(table_data, colWidths=[200, 75, 75, 85, 85])
@@ -251,9 +257,8 @@ if data_mode == "Dual TSV (Plate A + B)":
     side_b = st.sidebar.selectbox("Assign Side File B", ["left", "right"], index=1)
     
     if file_a and file_b:
-        freq_a, data_a = parse_tsv(file_a)
-        freq_b, data_b = parse_tsv(file_b)
-        dt = 1.0 / freq_a
+        dt, data_a = parse_tsv(file_a)
+        _, data_b = parse_tsv(file_b)
         num_frames = min(len(data_a), len(data_b))
         t = np.arange(num_frames) * dt
         fz_a = np.abs(data_a[:num_frames, 2])
@@ -290,7 +295,7 @@ elif data_mode == "Single CSV":
             f_total = f_left + f_right
 
 # ==============================================================================
-# 5. CORE ANALYSIS & REPORT RENDERING
+# 5. CORE ANALYSIS & REPORT RENDERING (ANICIC ET AL., 2023 24 RELIABLE METRICS)
 # ==============================================================================
 
 if t is not None and f_total is not None and len(f_total) > 0:
@@ -312,7 +317,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     mass_left = bw_left / g if bw_left > 0 else mass * 0.5
     mass_right = bw_right / g if bw_right > 0 else mass * 0.5
     
-    # Robust Sub-phase Detection
+    # Sub-phase Boundaries Detection
     flight_threshold = 30.0
     flight_indices = np.where(sf < flight_threshold)[0]
     tIdx_auto = flight_indices[0] if len(flight_indices) > 0 else n_samples - 1
@@ -383,15 +388,15 @@ if t is not None and f_total is not None and len(f_total) > 0:
         disp_total[i] = cD
 
     contraction_time = max(dt, t[tIdx] - t[sIdx])
-    unweight_dur = max(0.0, t[bIdx] - t[sIdx])
-    braking_dur = max(0.0, t[zIdx] - t[bIdx])
     propulsive_dur = max(0.0, t[tIdx] - t[zIdx])
     flight_dur = max(0.0, t[lIdx] - t[tIdx])
 
-    jh_flight = (g * (flight_dur ** 2)) / 8.0 * 100.0
-    v_takeoff = vel_total[tIdx]
-    jh_impulse = ((v_takeoff ** 2) / (2.0 * g)) * 100.0
+    # 24 Reliable Metrics (Anicic et al., 2023)
+    jh_flight = (g * (flight_dur ** 2)) / 8.0 * 100.0  # cm
+    v_takeoff = vel_total[tIdx]  # m/s
+    jh_impulse = ((v_takeoff ** 2) / (2.0 * g)) * 100.0  # cm
     rsi_modified = (jh_flight / 100.0) / contraction_time if contraction_time > 0 else 0.0
+    peak_v_prop = np.max(vel_total[zIdx:min(tIdx + 1, n_samples)]) if len(vel_total[zIdx:min(tIdx + 1, n_samples)]) > 0 else 0.0
 
     unweight_f = sf[sIdx:min(bIdx + 1, n_samples)]
     unweight_impulse = calc_impulse(unweight_f, dt)
@@ -402,35 +407,33 @@ if t is not None and f_total is not None and len(f_total) > 0:
     brak_v = vel_total[bIdx:min(zIdx + 1, n_samples)]
     brak_p = brak_f * brak_v
 
-    avg_brak_f = calc_avg(brak_f)
     avg_brak_fl = calc_avg(brak_fl)
     avg_brak_fr = calc_avg(brak_fr)
+    avg_brak_f = calc_avg(brak_f)
     avg_brak_p = calc_avg(brak_p)
-    peak_brak_f = np.max(brak_f) if len(brak_f) > 0 else 0.0
-    peak_brak_fl = np.max(brak_fl) if len(brak_fl) > 0 else 0.0
-    peak_brak_fr = np.max(brak_fr) if len(brak_fr) > 0 else 0.0
-    peak_v_neg = np.min(vel_total[sIdx:min(zIdx + 1, n_samples)]) if len(vel_total[sIdx:min(zIdx + 1, n_samples)]) > 0 else 0.0
-
     brak_impulse = calc_impulse(brak_f, dt)
     brak_impulse_l = calc_impulse(brak_fl, dt)
     brak_impulse_r = calc_impulse(brak_fr, dt)
+    peak_v_neg = np.min(vel_total[sIdx:min(zIdx + 1, n_samples)]) if len(vel_total[sIdx:min(zIdx + 1, n_samples)]) > 0 else 0.0
 
     prop_f = sf[zIdx:min(tIdx + 1, n_samples)]
     prop_fl = sl[zIdx:min(tIdx + 1, n_samples)]
     prop_fr = sr[zIdx:min(tIdx + 1, n_samples)]
-    prop_v = vel_total[zIdx:min(tIdx + 1, n_samples)]
-    prop_p = prop_f * prop_v
+    prop_p = prop_f * vel_total[zIdx:min(tIdx + 1, n_samples)]
 
-    avg_prop_f = calc_avg(prop_f)
     avg_prop_fl = calc_avg(prop_fl)
     avg_prop_fr = calc_avg(prop_fr)
-    avg_prop_p = calc_avg(prop_p)
-
-    peak_prop_f = np.max(prop_f) if len(prop_f) > 0 else 0.0
+    avg_prop_f = calc_avg(prop_f)
     peak_prop_fl = np.max(prop_fl) if len(prop_fl) > 0 else 0.0
     peak_prop_fr = np.max(prop_fr) if len(prop_fr) > 0 else 0.0
+    peak_prop_f = np.max(prop_f) if len(prop_f) > 0 else 0.0
+    
+    peak_brak_fl = np.max(brak_fl) if len(brak_fl) > 0 else 0.0
+    peak_brak_fr = np.max(brak_fr) if len(brak_fr) > 0 else 0.0
+    peak_brak_f = np.max(brak_f) if len(brak_f) > 0 else 0.0
+
     peak_prop_p = np.max(prop_p) if len(prop_p) > 0 else 0.0
-    peak_v_prop = np.max(prop_v) if len(prop_v) > 0 else 0.0
+    avg_prop_p = calc_avg(prop_p)
 
     prop_impulse = calc_impulse(prop_f, dt)
     prop_impulse_l = calc_impulse(prop_fl, dt)
@@ -438,15 +441,20 @@ if t is not None and f_total is not None and len(f_total) > 0:
     positive_impulse = brak_impulse + prop_impulse
 
     land_impulse = 0.0
+    land_impulse_l = 0.0
+    land_impulse_r = 0.0
     if lIdx > tIdx and lIdx < n_samples:
         land_end_idx = min(n_samples, lIdx + int(0.5 / dt))
         land_impulse = calc_impulse(sf[lIdx:land_end_idx], dt)
+        land_impulse_l = calc_impulse(sl[lIdx:land_end_idx], dt)
+        land_impulse_r = calc_impulse(sr[lIdx:land_end_idx], dt)
 
-    com_depth = abs(disp_total[zIdx] - disp_total[sIdx]) * 100.0
-    com_takeoff = disp_total[tIdx] * 100.0
+    com_depth = abs(disp_total[zIdx] - disp_total[sIdx]) * 100.0  # cm
+    com_takeoff = disp_total[tIdx] * 100.0  # cm
     leg_stiffness = (peak_brak_f / (com_depth / 100.0)) if com_depth > 0 else 0.0
     flight_jump_ratio = flight_dur / contraction_time if contraction_time > 0 else 0.0
 
+    # --- REPORT STRUCTURED BY 4 PCA COMPONENTS (ANICIC ET AL., 2023) ---
     report = {
         "1. Performance Component (59% Variance)": {
             "Jump Height - Flight Time (cm)": {"Left": "-", "Right": "-", "Total": f"{jh_flight:.1f}", "Deficit": "-"},
@@ -455,30 +463,30 @@ if t is not None and f_total is not None and len(f_total) > 0:
             "Take-off Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{v_takeoff:.2f}", "Deficit": "-"},
             "Peak Propulsive Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{peak_v_prop:.2f}", "Deficit": "-"},
             "RSI Modified (AU)": {"Left": "-", "Right": "-", "Total": f"{rsi_modified:.2f}", "Deficit": "-"},
+            "Landing Impulse (N·s)": {"Left": f"{land_impulse_l:.0f}", "Right": f"{land_impulse_r:.0f}", "Total": f"{land_impulse:.0f}", "Deficit": calc_deficit_str(land_impulse_l, land_impulse_r)},
             "Peak Propulsive Power (W)": {"Left": "-", "Right": "-", "Total": f"{peak_prop_p:.0f}", "Deficit": "-"},
-            "Landing Impulse (N·s)": {"Left": "-", "Right": "-", "Total": f"{land_impulse:.0f}", "Deficit": "-"},
+            "Mean Propulsive Power (W)": {"Left": "-", "Right": "-", "Total": f"{avg_prop_p:.0f}", "Deficit": "-"},
+            "Propulsive Impulse (N·s)": {"Left": f"{prop_impulse_l:.0f}", "Right": f"{prop_impulse_r:.0f}", "Total": f"{prop_impulse:.0f}", "Deficit": calc_deficit_str(prop_impulse_l, prop_impulse_r)},
+            "Positive Impulse (N·s)": {"Left": "-", "Right": "-", "Total": f"{positive_impulse:.0f}", "Deficit": "-"},
             "COM Height at Take-off (cm)": {"Left": "-", "Right": "-", "Total": f"{com_takeoff:.1f}", "Deficit": "-"}
         },
         "2. Eccentric Component (16% Variance)": {
-            "Mean Braking Power (W)": {"Left": "-", "Right": "-", "Total": f"{abs(avg_brak_p):.0f}", "Deficit": "-"},
-            "Mean Braking Force (N)": {"Left": f"{avg_brak_fl:.0f}", "Right": f"{avg_brak_fr:.0f}", "Total": f"{avg_brak_f:.0f}", "Deficit": calc_deficit_str(avg_brak_fl, avg_brak_fr)},
+            "Mean Force during Breaking Phase (N)": {"Left": f"{avg_brak_fl:.0f}", "Right": f"{avg_brak_fr:.0f}", "Total": f"{avg_brak_f:.0f}", "Deficit": calc_deficit_str(avg_brak_fl, avg_brak_fr)},
             "Braking Impulse (N·s)": {"Left": f"{brak_impulse_l:.0f}", "Right": f"{brak_impulse_r:.0f}", "Total": f"{brak_impulse:.0f}", "Deficit": calc_deficit_str(brak_impulse_l, brak_impulse_r)},
+            "Mean Power during Breaking Phase (W)": {"Left": "-", "Right": "-", "Total": f"{abs(avg_brak_p):.0f}", "Deficit": "-"},
             "Unloading Impulse (N·s)": {"Left": "-", "Right": "-", "Total": f"{unweight_impulse:.0f}", "Deficit": "-"},
             "Peak Negative Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{peak_v_neg:.2f}", "Deficit": "-"}
         },
         "3. Concentric Component (11% Variance)": {
-            "Mean Propulsive Force (N)": {"Left": f"{avg_prop_fl:.0f}", "Right": f"{avg_prop_fr:.0f}", "Total": f"{avg_prop_f:.0f}", "Deficit": calc_deficit_str(avg_prop_fl, avg_prop_fr)},
-            "Peak Propulsive Force (N)": {"Left": f"{peak_prop_fl:.0f}", "Right": f"{peak_prop_fr:.0f}", "Total": f"{peak_prop_f:.0f}", "Deficit": calc_deficit_str(peak_prop_fl, peak_prop_fr)},
-            "Peak Braking Force (N)": {"Left": f"{peak_brak_fl:.0f}", "Right": f"{peak_brak_fr:.0f}", "Total": f"{peak_brak_f:.0f}", "Deficit": calc_deficit_str(peak_brak_fl, peak_brak_fr)},
-            "Mean Propulsive Power (W)": {"Left": "-", "Right": "-", "Total": f"{avg_prop_p:.0f}", "Deficit": "-"},
-            "Propulsive Impulse (N·s)": {"Left": f"{prop_impulse_l:.0f}", "Right": f"{prop_impulse_r:.0f}", "Total": f"{prop_impulse:.0f}", "Deficit": calc_deficit_str(prop_impulse_l, prop_impulse_r)},
-            "Positive Impulse (N·s)": {"Left": "-", "Right": "-", "Total": f"{positive_impulse:.0f}", "Deficit": "-"}
+            "Peak Force during Propulsive Phase (N)": {"Left": f"{peak_prop_fl:.0f}", "Right": f"{peak_prop_fr:.0f}", "Total": f"{peak_prop_f:.0f}", "Deficit": calc_deficit_str(peak_prop_fl, peak_prop_fr)},
+            "Mean Force during Propulsive Phase (N)": {"Left": f"{avg_prop_fl:.0f}", "Right": f"{avg_prop_fr:.0f}", "Total": f"{avg_prop_f:.0f}", "Deficit": calc_deficit_str(avg_prop_fl, avg_prop_fr)},
+            "Peak Force during Breaking Phase (N)": {"Left": f"{peak_brak_fl:.0f}", "Right": f"{peak_brak_fr:.0f}", "Total": f"{peak_brak_f:.0f}", "Deficit": calc_deficit_str(peak_brak_fl, peak_brak_fr)}
         },
         "4. Jump Strategy Component (6% Variance)": {
             "Propulsive Phase Duration (s)": {"Left": "-", "Right": "-", "Total": f"{propulsive_dur:.2f}", "Deficit": "-"},
-            "Countermovement Depth (cm)": {"Left": "-", "Right": "-", "Total": f"{com_depth:.1f}", "Deficit": "-"},
+            "Countermovement Center of Mass Depth (cm)": {"Left": "-", "Right": "-", "Total": f"{com_depth:.1f}", "Deficit": "-"},
             "Leg Stiffness (N/m)": {"Left": "-", "Right": "-", "Total": f"{leg_stiffness:.0f}" if leg_stiffness > 0 else "N/A", "Deficit": "-"},
-            "Flight Time : Jump Time Ratio (AU)": {"Left": "-", "Right": "-", "Total": f"{flight_jump_ratio:.2f}", "Deficit": "-"}
+            "Flight Time to Jump Time Ratio (AU)": {"Left": "-", "Right": "-", "Total": f"{flight_jump_ratio:.2f}", "Deficit": "-"}
         }
     }
 
