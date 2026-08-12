@@ -32,7 +32,6 @@ def detect_phases_sequential(t, sf, dt, quiet_samples):
     force_sd = np.std(sf[:quiet_samples])
     mass = bw / g
 
-    # 1. Anchor: Identify the true main Flight Phase (airborne contiguous block)
     flight_mask = sf < 20.0
     labeled, num_features = label(flight_mask)
     
@@ -41,27 +40,23 @@ def detect_phases_sequential(t, sf, dt, quiet_samples):
         main_flight_label = np.argmax(block_lengths) + 1
         flight_indices = np.where(labeled == main_flight_label)[0]
         
-        tIdx_auto = flight_indices[0]  # True Take-off
-        lIdx_auto = flight_indices[-1] # True Landing
+        tIdx_auto = flight_indices[0]
+        lIdx_auto = flight_indices[-1]
     else:
-        # Fallback if no airborne phase is found
         tIdx_auto = int(n_samples * 0.7)
         lIdx_auto = int(n_samples * 0.8)
 
-    # 2. Search BEFORE Take-off for Propulsion Peak & Braking Minimum
     prop_search_start = max(0, tIdx_auto - int(1.5 / dt))
     if tIdx_auto > prop_search_start:
         peak_prop_idx = prop_search_start + np.argmax(sf[prop_search_start:tIdx_auto])
     else:
         peak_prop_idx = max(0, tIdx_auto - 1)
 
-    # Min force before peak force = Braking Onset (Min Force)
     if peak_prop_idx > prop_search_start:
         bIdx_auto = prop_search_start + np.argmin(sf[prop_search_start:peak_prop_idx])
     else:
         bIdx_auto = max(0, peak_prop_idx - int(0.2 / dt))
 
-    # 3. Search BACKWARDS from Braking Min Force to find true Unweighting Onset (Start)
     bw_dev = max(force_sd * 5, bw * 0.025)
     start_search = np.where((np.arange(n_samples) < bIdx_auto) & (sf >= bw - bw_dev))[0]
     if len(start_search) > 0:
@@ -69,7 +64,6 @@ def detect_phases_sequential(t, sf, dt, quiet_samples):
     else:
         sIdx_auto = max(0, bIdx_auto - int(0.4 / dt))
 
-    # 4. Propulsive Onset (V = 0 crossing)
     vel_temp = np.cumsum((sf[sIdx_auto:tIdx_auto + 1] - bw) / mass) * dt
     b_rel = max(0, bIdx_auto - sIdx_auto)
     zero_crossings = np.where(vel_temp[b_rel:] >= 0)[0]
@@ -78,7 +72,6 @@ def detect_phases_sequential(t, sf, dt, quiet_samples):
     else:
         zIdx_auto = bIdx_auto
 
-    # Ensure logical sequence constraints
     tIdx_auto = min(tIdx_auto, n_samples - 1)
     lIdx_auto = min(lIdx_auto, n_samples - 1)
     zIdx_auto = min(zIdx_auto, tIdx_auto)
@@ -189,16 +182,16 @@ def calculate_metrics(t, sf, sl, sr, dt, sIdx, bIdx, zIdx, tIdx, lIdx):
             "COM Height at Take-off (cm)": {"Left": "-", "Right": "-", "Total": f"{com_takeoff:.1f}", "Deficit": "-"}
         },
         "2. Eccentric Component (16% Variance)": {
-            "Mean Force during Breaking Phase (N)": {"Left": f"{avg_brak_fl:.0f}", "Right": f"{avg_brak_fr:.0f}", "Total": f"{avg_brak_f:.0f}", "Deficit": calc_deficit_str(avg_brak_fl, avg_brak_fr)},
+            "Mean Force during Braking Phase (N)": {"Left": f"{avg_brak_fl:.0f}", "Right": f"{avg_brak_fr:.0f}", "Total": f"{avg_brak_f:.0f}", "Deficit": calc_deficit_str(avg_brak_fl, avg_brak_fr)},
             "Braking Impulse (N·s)": {"Left": f"{brak_impulse_l:.0f}", "Right": f"{brak_impulse_r:.0f}", "Total": f"{brak_impulse:.0f}", "Deficit": calc_deficit_str(brak_impulse_l, brak_impulse_r)},
-            "Mean Power during Breaking Phase (W)": {"Left": "-", "Right": "-", "Total": f"{abs(avg_brak_p):.0f}", "Deficit": "-"},
+            "Mean Power during Braking Phase (W)": {"Left": "-", "Right": "-", "Total": f"{abs(avg_brak_p):.0f}", "Deficit": "-"},
             "Unloading Impulse (N·s)": {"Left": "-", "Right": "-", "Total": f"{unweight_impulse:.0f}", "Deficit": "-"},
             "Peak Negative Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{peak_v_neg:.2f}", "Deficit": "-"}
         },
         "3. Concentric Component (11% Variance)": {
             "Peak Force during Propulsive Phase (N)": {"Left": f"{peak_prop_fl:.0f}", "Right": f"{peak_prop_fr:.0f}", "Total": f"{peak_prop_f:.0f}", "Deficit": calc_deficit_str(peak_prop_fl, peak_prop_fr)},
             "Mean Force during Propulsive Phase (N)": {"Left": f"{avg_prop_fl:.0f}", "Right": f"{avg_prop_fr:.0f}", "Total": f"{avg_prop_f:.0f}", "Deficit": calc_deficit_str(avg_prop_fl, avg_prop_fr)},
-            "Peak Force during Breaking Phase (N)": {"Left": f"{peak_brak_fl:.0f}", "Right": f"{peak_brak_fr:.0f}", "Total": f"{peak_brak_f:.0f}", "Deficit": calc_deficit_str(peak_brak_fl, peak_brak_fr)}
+            "Peak Force during Braking Phase (N)": {"Left": f"{peak_brak_fl:.0f}", "Right": f"{peak_brak_fr:.0f}", "Total": f"{peak_brak_f:.0f}", "Deficit": calc_deficit_str(peak_brak_fl, peak_brak_fr)}
         },
         "4. Jump Strategy Component (6% Variance)": {
             "Propulsive Phase Duration (s)": {"Left": "-", "Right": "-", "Total": f"{propulsive_dur:.2f}", "Deficit": "-"},
