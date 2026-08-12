@@ -90,9 +90,13 @@ if t is not None and f_total is not None and len(f_total) > 0:
     zIdx = min(max(0, int(round((t_split - t[0]) / dt))), n_samples - 1)
     tIdx = min(max(0, int(round((t_takeoff - t[0]) / dt))), n_samples - 1)
     
-    l_matches = np.where((t > t[tIdx] + 0.05) & (sf >= 15.0))[0]
-    lIdx = l_matches[0] if len(l_matches) > 0 else n_samples - 1
-    lIdx = min(lIdx, n_samples - 1)
+    airborne_frames = np.where((np.arange(n_samples) >= tIdx) & (sf < 20.0))[0]
+    if len(airborne_frames) > 0:
+        first_air = airborne_frames[0]
+        non_air = np.where((np.arange(n_samples) > first_air) & (sf >= 20.0))[0]
+        lIdx = non_air[0] if len(non_air) > 0 else n_samples - 1
+    else:
+        lIdx = n_samples - 1
 
     report = calculate_metrics(t, sf, sl, sr, dt, sIdx, bIdx, zIdx, tIdx, lIdx)
 
@@ -128,7 +132,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
     fig_deficit = go.Figure()
     fig_deficit.add_trace(go.Scatter(x=t, y=deficits, name="Asymmetry", fill='tozeroy', fillcolor='rgba(77, 41, 148, 0.15)', line=dict(color='#4d2994', width=2)))
     
-    # Highlight sub-phases on Asymmetry plot
     fig_deficit.add_vrect(x0=t_start, x1=t_braking, fillcolor="yellow", opacity=0.08, line_width=0)
     fig_deficit.add_vrect(x0=t_braking, x1=t_split, fillcolor="red", opacity=0.08, line_width=0)
     fig_deficit.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="green", opacity=0.08, line_width=0)
