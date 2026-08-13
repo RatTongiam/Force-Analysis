@@ -21,26 +21,26 @@ def load_image_from_github(url):
         return None
 
 def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, crop_x_min=None, crop_x_max=None):
-    # ปรับสัดส่วน figsize ให้สูงขึ้น (สัดส่วนสมจริง ไม่แบน) และเพิ่ม dpi เป็น 300 เพื่อความคมชัดสูง
-    fig, ax = plt.subplots(figsize=(9.0, 3.8), dpi=300)
+    # ปรับสัดส่วน figsize ให้สูงขึ้นเพื่อแก้ปัญหากราฟแบน และเพิ่มความคมชัดด้วย dpi=300
+    fig, ax = plt.subplots(figsize=(9.0, 4.4), dpi=300)
     
-    ax.plot(t, sl, color='#818cf8', linewidth=1.2, label='Left Limb')
-    ax.plot(t, sr, color='#f87171', linewidth=1.2, label='Right Limb')
-    ax.plot(t, sf, color='#4d2994', linewidth=2.0, label='Total Force')
+    ax.plot(t, sl, color='#818cf8', linewidth=1.3, label='Left Limb')
+    ax.plot(t, sr, color='#f87171', linewidth=1.3, label='Right Limb')
+    ax.plot(t, sf, color='#4d2994', linewidth=2.1, label='Total Force')
     
     ax.axvspan(t_start, t_braking, color='#eab308', alpha=0.15)
     ax.axvspan(t_braking, t_split, color='#ef4444', alpha=0.15)
     ax.axvspan(t_split, t_takeoff, color='#22c55e', alpha=0.15)
     
-    ax.axvline(x=t_start, color='#ca8a04', linestyle='--', linewidth=1.3)
-    ax.axvline(x=t_braking, color='#ef4444', linestyle='--', linewidth=1.3)
-    ax.axvline(x=t_split, color='#22c55e', linestyle='--', linewidth=1.3)
-    ax.axvline(x=t_takeoff, color='#dc2626', linestyle='--', linewidth=1.3)
+    ax.axvline(x=t_start, color='#ca8a04', linestyle='--', linewidth=1.4)
+    ax.axvline(x=t_braking, color='#ef4444', linestyle='--', linewidth=1.4)
+    ax.axvline(x=t_split, color='#22c55e', linestyle='--', linewidth=1.4)
+    ax.axvline(x=t_takeoff, color='#dc2626', linestyle='--', linewidth=1.4)
     
     max_y = float(np.max(sf)) * 1.15 if len(sf) > 0 else 3000.0
-    ax.text((t_start + t_braking) / 2.0, max_y * 0.94, 'Unweighting', color='#ca8a04', fontsize=9, fontweight='bold', ha='center')
-    ax.text((t_braking + t_split) / 2.0, max_y * 0.86, 'Braking', color='#ef4444', fontsize=9, fontweight='bold', ha='center')
-    ax.text((t_split + t_takeoff) / 2.0, max_y * 0.94, 'Propulsive', color='#22c55e', fontsize=9, fontweight='bold', ha='center')
+    ax.text((t_start + t_braking) / 2.0, max_y * 0.94, 'Unweighting', color='#ca8a04', fontsize=10, fontweight='bold', ha='center')
+    ax.text((t_braking + t_split) / 2.0, max_y * 0.86, 'Braking', color='#ef4444', fontsize=10, fontweight='bold', ha='center')
+    ax.text((t_split + t_takeoff) / 2.0, max_y * 0.94, 'Propulsive', color='#22c55e', fontsize=10, fontweight='bold', ha='center')
     
     t_min = float(t[0]) if len(t) > 0 else 0.0
     t_max = float(t[-1]) if len(t) > 0 else 10.0
@@ -49,10 +49,10 @@ def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeo
     
     ax.set_xlim(x_start, x_end)
     ax.set_ylim(0, max_y)
-    ax.set_ylabel('Force (N)', fontsize=10)
-    ax.set_title('FORCE-TIME ANALYSIS & SUB-PHASES', fontsize=12, fontweight='bold', color='#1e1b4b', pad=8)
+    ax.set_ylabel('Force (N)', fontsize=11)
+    ax.set_title('FORCE-TIME ANALYSIS & SUB-PHASES', fontsize=13, fontweight='bold', color='#1e1b4b', pad=10)
     ax.grid(True, linestyle=':', alpha=0.6)
-    ax.legend(loc='upper right', fontsize=9)
+    ax.legend(loc='upper right', fontsize=10)
 
     mid_unweight = (t_start + t_braking) / 2.0
     mid_brake = (t_braking + t_split) / 2.0
@@ -73,7 +73,8 @@ def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeo
     for pic in pic_configs:
         img = load_image_from_github(github_base + "/" + pic["file"])
         if img is not None:
-            imagebox = OffsetImage(img, zoom=0.12)
+            # ปรับสัดส่วน zoom ให้รูปคนตัวอย่างมีความสูงสมส่วน ไม่เตี้ยแบน
+            imagebox = OffsetImage(img, zoom=0.16)
             ab = AnnotationBbox(imagebox, (pic["x"], max_y * 0.62), frameon=False, box_alignment=(0.5, 0.0))
             ax.add_artist(ab)
 
@@ -85,8 +86,8 @@ def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeo
     return img_buf
 
 def create_deficit_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, threshold_alert=15.0, crop_x_min=None, crop_x_max=None):
-    # ปรับสัดส่วน figsize ให้ได้สเกลความสูงพอดี ไม่เตี้ยแบน พร้อม DPI สูง
-    fig, ax = plt.subplots(figsize=(9.0, 2.4), dpi=300)
+    # ปรับสัดส่วนความสูงให้ได้สเกลสมดุลกับกราฟหลัก
+    fig, ax = plt.subplots(figsize=(9.0, 2.8), dpi=300)
     
     max_sl_sr = np.maximum(sl, sr)
     deficits = np.where((sf >= 50.0) & (max_sl_sr > 0), ((sl - sr) / np.maximum(max_sl_sr, 1e-6)) * 100, 0.0)
@@ -101,7 +102,7 @@ def create_deficit_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_tak
     ax.axvline(x=t_takeoff, color='#dc2626', linestyle='--', linewidth=1.3)
 
     ax.axhline(y=0, color='#6b7280', linewidth=1.1)
-    ax.plot(t, deficits, color='#4d2994', linewidth=1.5, label='Asymmetry %')
+    ax.plot(t, deficits, color='#4d2994', linewidth=1.6, label='Asymmetry %')
     ax.axhspan(-threshold_alert, threshold_alert, color='#22c55e', alpha=0.15)
 
     t_min = float(t[0]) if len(t) > 0 else 0.0
@@ -111,9 +112,9 @@ def create_deficit_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_tak
 
     ax.set_xlim(x_start, x_end)
     ax.set_ylim(-55, 55)
-    ax.set_xlabel('Time (s)', fontsize=9)
-    ax.set_ylabel('Deficit %', fontsize=9)
-    ax.set_title('L/R ASYMMETRY % PROFILE', fontsize=10, fontweight='bold', color='#1e1b4b', pad=6)
+    ax.set_xlabel('Time (s)', fontsize=10)
+    ax.set_ylabel('Deficit %', fontsize=10)
+    ax.set_title('L/R ASYMMETRY % PROFILE', fontsize=11, fontweight='bold', color='#1e1b4b', pad=8)
     ax.grid(True, linestyle=':', alpha=0.6)
 
     plt.tight_layout()
@@ -139,37 +140,38 @@ def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_ta
         'DocTitle',
         parent=styles['Normal'],
         fontName='Helvetica-Bold',
-        fontSize=13,
-        leading=15,
+        fontSize=15,
+        leading=18,
         textColor=colors.HexColor('#1e1b4b')
     )
     subtitle_style = ParagraphStyle(
         'DocSubtitle',
         parent=styles['Normal'],
         fontName='Helvetica',
-        fontSize=7.5,
-        leading=9,
+        fontSize=8.5,
+        leading=11,
         textColor=colors.HexColor('#64748b')
     )
+    # เพิ่มขนาด Font ในตารางให้ใหญ่อ่านชัดเจนขึ้น
     header_style = ParagraphStyle(
         'HeaderStyle',
         fontName='Helvetica-Bold',
-        fontSize=7,
-        leading=8.5,
+        fontSize=8,
+        leading=10,
         textColor=colors.whitesmoke
     )
     cell_style = ParagraphStyle(
         'CellStyle',
         fontName='Helvetica',
-        fontSize=6.5,
-        leading=8,
+        fontSize=7.5,
+        leading=9.5,
         textColor=colors.HexColor('#1e293b')
     )
     cat_style = ParagraphStyle(
         'CatStyle',
         fontName='Helvetica-Bold',
-        fontSize=7,
-        leading=8.5,
+        fontSize=8,
+        leading=10,
         textColor=colors.HexColor('#4d2994')
     )
     
@@ -178,14 +180,14 @@ def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_ta
     # Header
     story.append(Paragraph("Free JumpAnz Team - Biomechanics Analysis", title_style))
     story.append(Paragraph("PRIMA MOTION TECHNOLOGY — Technology that unlocks scientific insight", subtitle_style))
-    story.append(Spacer(1, 3))
+    story.append(Spacer(1, 6))
     
-    # 1. กราฟ Force-Time (ความสูงสมส่วน คมชัดระดับ Print Quality)
+    # 1. กราฟ Force-Time (ขยายความสูงเต็มสัดส่วน กระจายเต็มพื้นที่ว่าง)
     force_chart_buf = create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, crop_x_min, crop_x_max)
-    story.append(RLImage(force_chart_buf, width=545, height=160))
-    story.append(Spacer(1, 3))
+    story.append(RLImage(force_chart_buf, width=545, height=195))
+    story.append(Spacer(1, 6))
     
-    # 2. ตารางค่าชีวกลศาสตร์ (ขยายคอลัมน์ชื่อเต็ม 315pt บรรทัดเดียวจบ)
+    # 2. ตารางค่าชีวกลศาสตร์ (Font ใหญ่ขึ้น และขยายคอลัมน์ชื่อเต็ม 315pt)
     table_data = [[
         Paragraph("Biomechanical Metric", header_style),
         Paragraph("Left", header_style),
@@ -212,19 +214,19 @@ def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_ta
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4d2994')),
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 1.0),
-        ('TOPPADDING', (0, 0), (-1, -1), 1.0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2.2),
+        ('TOPPADDING', (0, 0), (-1, -1), 2.2),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e2e8f0')),
     ])
     
     table = Table(table_data, colWidths=[315, 55, 55, 55, 65])
     table.setStyle(t_style)
     story.append(table)
-    story.append(Spacer(1, 3))
+    story.append(Spacer(1, 6))
 
-    # 3. กราฟ L/R Asymmetry Deficit % ใต้ตาราง
+    # 3. กราฟ L/R Asymmetry Deficit % ด้านล่าง
     deficit_chart_buf = create_deficit_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, threshold_alert, crop_x_min, crop_x_max)
-    story.append(RLImage(deficit_chart_buf, width=545, height=110))
+    story.append(RLImage(deficit_chart_buf, width=545, height=130))
 
     doc.build(story)
     pdf_buffer.seek(0)
