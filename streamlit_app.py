@@ -152,8 +152,9 @@ if t is not None and f_total is not None and len(f_total) > 0:
         st.session_state.t_braking = float(t[bIdx_auto])
         st.session_state.t_split = float(t[zIdx_auto])
         st.session_state.t_takeoff = float(t[tIdx_auto])
+        st.session_state.is_confirmed = False
 
-    # Safety Clamping เพื่อป้องกัน StreamlitValueAboveMaxError / ValueBelowMinError
+    # Safety Clamping
     st.session_state.t_start = max(t_min, min(st.session_state.t_start, t_max))
     st.session_state.t_braking = max(st.session_state.t_start, min(st.session_state.t_braking, t_max))
     st.session_state.t_split = max(st.session_state.t_braking, min(st.session_state.t_split, t_max))
@@ -163,6 +164,22 @@ if t is not None and f_total is not None and len(f_total) > 0:
     t_braking = st.session_state.t_braking
     t_split = st.session_state.t_split
     t_takeoff = st.session_state.t_takeoff
+
+    # คำนวณ t_landing สำหรับการมาร์กเฟสและ Crop
+    t_curr_landing = min(t_max, t_takeoff + 0.5) 
+    airborne_frames = np.where((np.arange(n_samples) >= int(round((t_takeoff - t_min)/dt))) & (sf < 25.0))[0]
+    if len(airborne_frames) > 0:
+        non_air = np.where((np.arange(n_samples) > airborne_frames[0]) & (sf >= 25.0))[0]
+        if len(non_air) > 0:
+            t_curr_landing = float(t[non_air[0]])
+
+    # กำหนดช่วงเวลาแกน X ตามสถานะ Confirmation
+    if st.session_state.get("is_confirmed", False):
+        crop_x_min = max(t_min, t_start - 0.8)
+        crop_x_max = min(t_max, t_curr_landing + 0.8)
+    else:
+        crop_x_min = t_min
+        crop_x_max = t_max
 
     # 1. GRAPH WITH HIGHLIGHT PHASES & PICTOGRAMS
     fig_force = go.Figure()
@@ -185,18 +202,8 @@ if t is not None and f_total is not None and len(f_total) > 0:
     mid_unweight = (t_start + t_braking) / 2.0
     mid_brake = (t_braking + t_split) / 2.0
     mid_prop = (t_split + t_takeoff) / 2.0
-    
-    tIdx_curr = min(max(0, int(round((t_takeoff - t[0]) / dt))), n_samples - 1)
-    airborne_frames = np.where((np.arange(n_samples) >= tIdx_curr) & (sf < 25.0))[0]
-    lIdx_curr = n_samples - 1
-    if len(airborne_frames) > 0:
-        first_air = airborne_frames[0]
-        non_air = np.where((np.arange(n_samples) > first_air) & (sf >= 25.0))[0]
-        if len(non_air) > 0:
-            lIdx_curr = non_air[0]
-
-    mid_flight = (t_takeoff + t[lIdx_curr]) / 2.0
-    mid_landing = min(t_max, t[lIdx_curr] + 0.2)
+    mid_flight = (t_takeoff + t_curr_landing) / 2.0
+    mid_landing = min(t_max, t_curr_landing + 0.2)
 
     max_y = float(np.max(sf)) * 1.15
 
@@ -208,7 +215,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     github_base = "https://raw.githubusercontent.com/RatTongiam/Force-Analysis/main"
 
     pictograms = [
-        {"url": f"{github_base}/Standing.png", "x": max(t_min, t_start - 0.15)},
+        {"url": f"{github_base}/Standing.png", "x": max(crop_x_min + 0.1, t_start - 0.2)},
         {"url": f"{github_base}/UP.png", "x": mid_unweight},
         {"url": f"{github_base}/BP.png", "x": mid_brake},
         {"url": f"{github_base}/PP.png", "x": mid_prop},
@@ -239,11 +246,11 @@ if t is not None and f_total is not None and len(f_total) > 0:
         height=480,
         margin=dict(l=40, r=40, t=50, b=20)
     )
-    fig_force.update_xaxes(range=[t_min, t_max])
+    fig_force.update_xaxes(range=[crop_x_min, crop_x_max])
     
     st.plotly_chart(fig_force, width="stretch")
 
-    # 2. PHASE BOUNDARY TIMELINE CONTROLS WITH SAFE BOUNDS
+    # 2. PHASE BOUNDARY TIMELINE CONTROLS & CONFIRMATION BUTTON
     st.markdown("##### 🎚️ Phase Boundary Timeline Controls")
 
     c1, c2, c3, c4 = st.columns(4)
@@ -276,7 +283,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
         v4_max = t_max
         v4_val = max(v4_min, min(t_takeoff, v4_max))
         v4_num = st.number_input("4. Take-off (s)", min_value=v4_min, max_value=v4_max, value=v4_val, step=float(dt), format="%.3f", key="num_4")
-        v4_slide = st.slider("4. Take-off Slider", min_value=v4_min, max_value=v4_max, value=v4_num, step=float(dt), format="%.3f", label_visibility="collapsed", key="slide_4")
+        v4_slide = st.slider("4. Take-off Slider", min_value=v4_min, max_value=v4_max, value=v4_val, step=float(dt), format="%.3f", label_visibility="collapsed", key="slide_4")
         new_takeoff = v4_slide
 
     if (new_start, new_braking, new_split, new_takeoff) != (t_start, t_braking, t_split, t_takeoff):
@@ -286,13 +293,24 @@ if t is not None and f_total is not None and len(f_total) > 0:
         st.session_state.t_takeoff = new_takeoff
         st.rerun()
 
+    # ปุ่ม Confirm / Edit Crop Mode
+    col_btn1, col_btn2 = st.columns([1, 4])
+    with col_btn1:
+        if not st.session_state.get("is_confirmed", False):
+            if st.button("✅ Confirm Phases & Crop Graph", type="primary"):
+                st.session_state.is_confirmed = True
+                st.rerun()
+        else:
+            if st.button("✏️ Edit / Show Full View"):
+                st.session_state.is_confirmed = False
+                st.rerun()
+
     # Index Calculations
     sIdx = min(max(0, int(round((new_start - t[0]) / dt))), n_samples - 1)
     bIdx = min(max(0, int(round((new_braking - t[0]) / dt))), n_samples - 1)
     zIdx = min(max(0, int(round((new_split - t[0]) / dt))), n_samples - 1)
     tIdx = min(max(0, int(round((new_takeoff - t[0]) / dt))), n_samples - 1)
-    
-    lIdx = lIdx_curr
+    lIdx = min(max(0, int(round((t_curr_landing - t[0]) / dt))), n_samples - 1)
 
     report = calculate_metrics(
         t, f_total, f_left, f_right, dt, sIdx, bIdx, zIdx, tIdx, lIdx, 
@@ -362,7 +380,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
         height=360,
         margin=dict(l=40, r=40, t=50, b=20)
     )
-    fig_deficit.update_xaxes(range=[t_min, t_max])
+    fig_deficit.update_xaxes(range=[crop_x_min, crop_x_max])
     st.plotly_chart(fig_deficit, width="stretch")
 
     st.markdown("### Standard Biomechanical Analysis Report (Anicic et al., 2023)")
