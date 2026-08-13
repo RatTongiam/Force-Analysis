@@ -33,7 +33,7 @@ threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=
 
 dt, t, f_left, f_right, f_total = None, None, None, None, None
 
-if data_mode == "MuscleLab CSV (.csv)":
+if data_mode == "MuscleLab CSV (CSV)":
     file_ml = st.sidebar.file_uploader("Upload MuscleLab CSV File (.csv)", type=["csv"])
     if file_ml:
         try:
@@ -41,7 +41,7 @@ if data_mode == "MuscleLab CSV (.csv)":
         except Exception as e:
             st.error(f"Error parsing MuscleLab CSV file: {e}")
 
-elif data_mode == "Dual TSV (Plate A + B)":
+elif data_mode == "Dual TSV (QTM)":
     file_a = st.sidebar.file_uploader("Upload Plate File A (.tsv)", type=["tsv"])
     side_a = st.sidebar.selectbox("Assign Side File A", ["left", "right"], index=0)
     file_b = st.sidebar.file_uploader("Upload Plate File B (.tsv)", type=["tsv"])
@@ -58,7 +58,7 @@ elif data_mode == "Dual TSV (Plate A + B)":
         f_right = fz_b if side_a == "left" else fz_a
         f_total = f_left + f_right
 
-elif data_mode == "VALD ForceDecks (CSV/TSV)":
+elif data_mode == "VALD ForceDecks (CSV)":
     file_vald = st.sidebar.file_uploader("Upload VALD ForceDecks File (.csv / .tsv)", type=["csv", "tsv"])
     if file_vald:
         try:
@@ -102,7 +102,7 @@ elif data_mode == "Single JSON (QTM)":
         except Exception as e:
             st.error(f"Error parsing QTM JSON file: {e}")
 
-elif data_mode == "Single CSV (C-Force)":
+elif data_mode == "Single CSV (C-Force Performance)":
     file_csv = st.sidebar.file_uploader("Upload Single CSV File (.csv)", type=["csv"])
     if file_csv:
         try:
@@ -127,56 +127,40 @@ if t is not None and f_total is not None and len(f_total) > 0:
         st.session_state.t_takeoff = float(t[tIdx_auto])
 
     st.sidebar.markdown("---")
-    st.sidebar.subheader("Phase Control")
-    st.sidebar.info("💡 คลิกลากเส้นแนวตั้งบนกราฟเพื่อปรับแต่งเฟส (ระบบล็อกลำดับเฟสให้อัตโนมัติ)")
+    st.sidebar.subheader("Phase Control Sliders")
+    
+    t_start = st.sidebar.slider("Start (Unweighting Onset)", float(t[0]), float(t[-1]), float(st.session_state.t_start), step=0.005)
+    t_braking = st.sidebar.slider("Braking Onset (Min Force)", float(t_start), float(t[-1]), float(max(st.session_state.t_braking, t_start)), step=0.005)
+    t_split = st.sidebar.slider("Propulsive Onset (V=0)", float(t_braking), float(t[-1]), float(max(st.session_state.t_split, t_braking)), step=0.005)
+    t_takeoff = st.sidebar.slider("Take-off", float(t_split), float(t[-1]), float(max(st.session_state.t_takeoff, t_split)), step=0.005)
+
+    st.session_state.t_start = t_start
+    st.session_state.t_braking = t_braking
+    st.session_state.t_split = t_split
+    st.session_state.t_takeoff = t_takeoff
 
     fig_force = go.Figure()
     fig_force.add_trace(go.Scatter(x=t, y=sl, name="Left Limb", line=dict(color='#818cf8', width=0.8)))
     fig_force.add_trace(go.Scatter(x=t, y=sr, name="Right Limb", line=dict(color='#f87171', width=0.8)))
     fig_force.add_trace(go.Scatter(x=t, y=sf, name="Total Force", line=dict(color='#4d2994', width=1.2)))
 
+    fig_force.add_vrect(x0=t_start, x1=t_braking, fillcolor="yellow", opacity=0.08, line_width=0)
+    fig_force.add_vrect(x0=t_braking, x1=t_split, fillcolor="red", opacity=0.08, line_width=0)
+    fig_force.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="green", opacity=0.08, line_width=0)
+
+    fig_force.add_vline(x=t_start, line_dash="dot", line_color="#ca8a04", line_width=1.2)
+    fig_force.add_vline(x=t_braking, line_dash="dot", line_color="#ef4444", line_width=1.2)
+    fig_force.add_vline(x=t_split, line_dash="dot", line_color="#22c55e", line_width=1.2)
+    fig_force.add_vline(x=t_takeoff, line_dash="dot", line_color="#dc2626", line_width=1.2)
+
     fig_force.update_layout(
         title="FORCE-TIME ANALYSIS & SUB-PHASES",
         xaxis_title="Time (s)",
         yaxis_title="Force (N)",
-        height=450,
-        shapes=[
-            dict(type="line", x0=st.session_state.t_start, x1=st.session_state.t_start, y0=0, y1=1, yref="paper", line=dict(color="#ca8a04", width=2, dash="dash")),
-            dict(type="line", x0=st.session_state.t_braking, x1=st.session_state.t_braking, y0=0, y1=1, yref="paper", line=dict(color="#ef4444", width=2, dash="dash")),
-            dict(type="line", x0=st.session_state.t_split, x1=st.session_state.t_split, y0=0, y1=1, yref="paper", line=dict(color="#22c55e", width=2, dash="dash")),
-            dict(type="line", x0=st.session_state.t_takeoff, x1=st.session_state.t_takeoff, y0=0, y1=1, yref="paper", line=dict(color="#dc2626", width=2, dash="dash")),
-        ]
+        height=450
     )
     
-    config = {'editable': True, 'edits': {'shapePosition': True}}
-    
-    col_chart, _ = st.columns([1, 0.001])
-    with col_chart:
-        event = st.plotly_chart(fig_force, width="stretch", config=config, key="force_chart")
-
-    if isinstance(event, dict) and "edits" in event and isinstance(event["edits"], dict) and "shape" in event["edits"]:
-        shape_info = event["edits"]["shape"]
-        if isinstance(shape_info, dict):
-            shape_idx = shape_info.get("index")
-            new_x = shape_info.get("x0")
-            if new_x is not None:
-                min_t, max_t = float(t[0]), float(t[-1])
-                new_x = max(min_t, min(max_t, new_x))
-                
-                if shape_idx == 0:
-                    st.session_state.t_start = min(new_x, st.session_state.t_braking)
-                elif shape_idx == 1:
-                    st.session_state.t_braking = max(st.session_state.t_start, min(new_x, st.session_state.t_split))
-                elif shape_idx == 2:
-                    st.session_state.t_split = max(st.session_state.t_braking, min(new_x, st.session_state.t_takeoff))
-                elif shape_idx == 3:
-                    st.session_state.t_takeoff = max(st.session_state.t_split, new_x)
-                st.rerun()
-
-    t_start = st.session_state.t_start
-    t_braking = st.session_state.t_braking
-    t_split = st.session_state.t_split
-    t_takeoff = st.session_state.t_takeoff
+    st.plotly_chart(fig_force, width="stretch", key="force_chart")
 
     sIdx = min(max(0, int(round((t_start - t[0]) / dt))), n_samples - 1)
     bIdx = min(max(0, int(round((t_braking - t[0]) / dt))), n_samples - 1)
