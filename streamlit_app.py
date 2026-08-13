@@ -134,7 +134,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     t_split = st.session_state.t_split
     t_takeoff = st.session_state.t_takeoff
 
-    # 1. GRAPH WITH NON-OVERLAPPING ANNOTATIONS
+    # 1. GRAPH WITH HIGHLIGHT PHASES & PICTOGRAMS
     fig_force = go.Figure()
     fig_force.add_trace(go.Scatter(x=t, y=sl, name="Left Limb", line=dict(color='#818cf8', width=0.8)))
     fig_force.add_trace(go.Scatter(x=t, y=sr, name="Right Limb", line=dict(color='#f87171', width=0.8)))
@@ -155,25 +155,67 @@ if t is not None and f_total is not None and len(f_total) > 0:
     mid_unweight = (t_start + t_braking) / 2.0
     mid_brake = (t_braking + t_split) / 2.0
     mid_prop = (t_split + t_takeoff) / 2.0
+    
+    # Estimate Landing Index for Flight Pictogram
+    tIdx_curr = min(max(0, int(round((t_takeoff - t[0]) / dt))), n_samples - 1)
+    airborne_frames = np.where((np.arange(n_samples) >= tIdx_curr) & (sf < 25.0))[0]
+    lIdx_curr = n_samples - 1
+    if len(airborne_frames) > 0:
+        first_air = airborne_frames[0]
+        non_air = np.where((np.arange(n_samples) > first_air) & (sf >= 25.0))[0]
+        if len(non_air) > 0:
+            lIdx_curr = non_air[0]
 
-    max_y = float(np.max(sf)) * 1.05
+    mid_flight = (t_takeoff + t[lIdx_curr]) / 2.0
+    mid_landing = min(t_max, t[lIdx_curr] + 0.2)
 
+    max_y = float(np.max(sf)) * 1.15
+
+    # Text Annotations
     fig_force.add_annotation(x=mid_unweight, y=max_y * 0.98, text="Unweighting", showarrow=False, font=dict(size=11, color="#ca8a04", family="Arial Bold"))
     fig_force.add_annotation(x=mid_brake, y=max_y * 0.90, text="Braking", showarrow=False, font=dict(size=11, color="#ef4444", family="Arial Bold"))
     fig_force.add_annotation(x=mid_prop, y=max_y * 0.98, text="Propulsive", showarrow=False, font=dict(size=11, color="#22c55e", family="Arial Bold"))
+
+    # GitHub Raw Assets Base URL
+    github_base = "https://raw.githubusercontent.com/RatTongiam/Force-Analysis/main"
+
+    pictograms = [
+        {"url": f"{github_base}/Standing.png", "x": max(t_min, t_start - 0.15)},
+        {"url": f"{github_base}/UP.png", "x": mid_unweight},
+        {"url": f"{github_base}/BP.png", "x": mid_brake},
+        {"url": f"{github_base}/PP.png", "x": mid_prop},
+        {"url": f"{github_base}/FP.png", "x": mid_flight},
+        {"url": f"{github_base}/LP.png", "x": mid_landing},
+    ]
+
+    for pic in pictograms:
+        fig_force.add_layout_image(
+            dict(
+                source=pic["url"],
+                xref="x",
+                yref="y",
+                x=pic["x"],
+                y=max_y * 0.75,
+                sizex=0.15,
+                sizey=max_y * 0.22,
+                xanchor="center",
+                yanchor="bottom",
+                layer="above"
+            )
+        )
 
     fig_force.update_layout(
         title="FORCE-TIME ANALYSIS & SUB-PHASES",
         xaxis_title="Time (s)",
         yaxis_title="Force (N)",
-        height=420,
+        height=480,
         margin=dict(l=40, r=40, t=50, b=20)
     )
     fig_force.update_xaxes(range=[t_min, t_max])
     
     st.plotly_chart(fig_force, width="stretch")
 
-    # 2. PHASE BOUNDARY TIMELINE CONTROLS (NUMBER INPUT + SLIDER COMBO)
+    # 2. PHASE BOUNDARY TIMELINE CONTROLS
     st.markdown("##### 🎚️ Phase Boundary Timeline Controls")
 
     c1, c2, c3, c4 = st.columns(4)
@@ -211,13 +253,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     zIdx = min(max(0, int(round((new_split - t[0]) / dt))), n_samples - 1)
     tIdx = min(max(0, int(round((new_takeoff - t[0]) / dt))), n_samples - 1)
     
-    airborne_frames = np.where((np.arange(n_samples) >= tIdx) & (sf < 25.0))[0]
-    if len(airborne_frames) > 0:
-        first_air = airborne_frames[0]
-        non_air = np.where((np.arange(n_samples) > first_air) & (sf >= 25.0))[0]
-        lIdx = non_air[0] if len(non_air) > 0 else n_samples - 1
-    else:
-        lIdx = n_samples - 1
+    lIdx = lIdx_curr
 
     report = calculate_metrics(t, sf, sl, sr, dt, sIdx, bIdx, zIdx, tIdx, lIdx)
 
@@ -230,16 +266,14 @@ if t is not None and f_total is not None and len(f_total) > 0:
         mime="application/pdf"
     )
 
-    # 3. L/R ASYMMETRY % GRAPH WITH HIGHLIGHT PHASES & 50% INCREASED HEIGHT
+    # 3. L/R ASYMMETRY % GRAPH
     deficits = np.where(sf >= 50, ((sl - sr) / np.maximum(sl, sr)) * 100, 0)
     fig_deficit = go.Figure()
 
-    # Phase Rectangles for Asymmetry Graph
     fig_deficit.add_vrect(x0=t_start, x1=t_braking, fillcolor="rgba(234, 179, 8, 0.12)", line_width=0)
     fig_deficit.add_vrect(x0=t_braking, x1=t_split, fillcolor="rgba(239, 68, 68, 0.12)", line_width=0)
     fig_deficit.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="rgba(34, 197, 94, 0.12)", line_width=0)
 
-    # Vertical Phase Boundary Lines
     fig_deficit.add_vline(x=t_start, line_width=1.5, line_dash="dash", line_color="#ca8a04")
     fig_deficit.add_vline(x=t_braking, line_width=1.5, line_dash="dash", line_color="#ef4444")
     fig_deficit.add_vline(x=t_split, line_width=1.5, line_dash="dash", line_color="#22c55e")
@@ -253,7 +287,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
         xaxis_title="Time (s)", 
         yaxis_title="Deficit %", 
         yaxis_range=[-55, 55], 
-        height=360,  # เพิ่มความสูงขึ้น 50% (จากเดิม 240 -> 360)
+        height=360,
         margin=dict(l=40, r=40, t=50, b=20)
     )
     fig_deficit.update_xaxes(range=[t_min, t_max])
