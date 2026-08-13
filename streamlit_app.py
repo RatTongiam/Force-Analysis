@@ -155,7 +155,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
     t_min = float(t[0])
     t_max = float(t[-1])
 
-    # ตรวจสอบการเปลี่ยนไฟล์หรือกด Reset เพื่อบังคับคำนวณ Phase ใหม่
     is_file_changed = (st.session_state.get("current_file_sig") != file_signature)
     
     if is_file_changed or "t_start" not in st.session_state or st.sidebar.button("🔄 Reset Phases"):
@@ -176,7 +175,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
     t_split = st.session_state.t_split
     t_takeoff = st.session_state.t_takeoff
 
-    # ป้องกัน Index Out of Bounds สำหรับ t_curr_landing
     t_curr_landing = min(t_max, t_takeoff + 0.5) 
     takeoff_idx = min(n_samples - 1, max(0, int(round((t_takeoff - t_min) / dt_val))))
     airborne_frames = np.where((np.arange(n_samples) >= takeoff_idx) & (sf < 25.0))[0]
@@ -185,9 +183,10 @@ if t is not None and f_total is not None and len(f_total) > 0:
         if len(non_air) > 0:
             t_curr_landing = float(t[non_air[0]])
 
+    # ปรับพารามิเตอร์ Crop Margin: ก่อน start 1.0s และ หลัง takeoff 1.5s
     if st.session_state.get("is_confirmed", False):
         crop_x_min = max(t_min, t_start - 1.0)
-        crop_x_max = min(t_max, t_takeoff + 2.0)
+        crop_x_max = min(t_max, t_takeoff + 1.5)
     else:
         crop_x_min = t_min
         crop_x_max = t_max
