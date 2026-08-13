@@ -11,13 +11,12 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 def get_pictogram_image(filename):
-    """โหลดรูปภาพ PNG จาก GitHub Raw และแปลงเป็น OffsetImage สำหรับ Matplotlib"""
+    """โหลดรูปภาพ PNG จาก GitHub Raw และบังคับแปลง Alpha Channel ให้โปร่งแสงจริง 100%"""
     url = f"https://raw.githubusercontent.com/RatTongiam/Force-Analysis/main/{filename}"
     try:
         resp = requests.get(url, timeout=3)
         if resp.status_code == 200:
-            img = PILImage.open(io.BytesIO(resp.content))
-            # ปรับสเกลขนาดรูปให้พอดีบนกราฟ PDF
+            img = PILImage.open(io.BytesIO(resp.content)).convert("RGBA")
             img.thumbnail((40, 60))
             return OffsetImage(img, zoom=0.4)
     except Exception:
@@ -42,24 +41,24 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
         Spacer(1, 8)
     ]
 
-    # --- PLOT WITH PICTOGRAMS & SUB-PHASES ---
+    # --- PLOT WITH TRANSPARENT PICTOGRAMS & SUB-PHASES ---
     fig_plt, ax = plt.subplots(figsize=(8, 3.2), dpi=200)
-    ax.plot(t, sl, label='Left Limb', color='#818cf8', linewidth=0.8)
-    ax.plot(t, sr, label='Right Limb', color='#f87171', linewidth=0.8)
-    ax.plot(t, sf, label='Total Force', color='#4d2994', linewidth=1.2)
+    ax.plot(t, sl, label='Left Limb', color='#818cf8', linewidth=0.8, zorder=3)
+    ax.plot(t, sr, label='Right Limb', color='#f87171', linewidth=0.8, zorder=3)
+    ax.plot(t, sf, label='Total Force', color='#4d2994', linewidth=1.2, zorder=4)
 
     # Shading Areas
-    ax.axvspan(t_start, t_braking, color='#fef08a', alpha=0.35)
-    ax.axvspan(t_braking, t_split, color='#fca5a5', alpha=0.35)
-    ax.axvspan(t_split, t_takeoff, color='#bbf7d0', alpha=0.35)
+    ax.axvspan(t_start, t_braking, color='#fef08a', alpha=0.35, zorder=1)
+    ax.axvspan(t_braking, t_split, color='#fca5a5', alpha=0.35, zorder=1)
+    ax.axvspan(t_split, t_takeoff, color='#bbf7d0', alpha=0.35, zorder=1)
 
     # Vertical Dotted Boundary Lines
-    ax.axvline(t_start, color='#ca8a04', linestyle='--', linewidth=0.8)
-    ax.axvline(t_braking, color='#ef4444', linestyle='--', linewidth=0.8)
-    ax.axvline(t_split, color='#22c55e', linestyle='--', linewidth=0.8)
-    ax.axvline(t_takeoff, color='#dc2626', linestyle='--', linewidth=0.8)
+    ax.axvline(t_start, color='#ca8a04', linestyle='--', linewidth=0.8, zorder=2)
+    ax.axvline(t_braking, color='#ef4444', linestyle='--', linewidth=0.8, zorder=2)
+    ax.axvline(t_split, color='#22c55e', linestyle='--', linewidth=0.8, zorder=2)
+    ax.axvline(t_takeoff, color='#dc2626', linestyle='--', linewidth=0.8, zorder=2)
 
-    # Dynamic Positioning for Pictograms & Labels
+    # Dynamic Positioning
     mid_unweight = (t_start + t_braking) / 2.0
     mid_brake = (t_braking + t_split) / 2.0
     mid_prop = (t_split + t_takeoff) / 2.0
@@ -80,12 +79,12 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
     max_y = float(np.max(sf)) * 1.25
     ax.set_ylim(0, max_y)
 
-    # Add Text Annotations
-    ax.text(mid_unweight, max_y * 0.94, "Unweighting", fontsize=7, fontweight='bold', color='#ca8a04', ha='center')
-    ax.text(mid_brake, max_y * 0.87, "Braking", fontsize=7, fontweight='bold', color='#ef4444', ha='center')
-    ax.text(mid_prop, max_y * 0.94, "Propulsive", fontsize=7, fontweight='bold', color='#22c55e', ha='center')
+    # Text Annotations
+    ax.text(mid_unweight, max_y * 0.94, "Unweighting", fontsize=7, fontweight='bold', color='#ca8a04', ha='center', zorder=5)
+    ax.text(mid_brake, max_y * 0.87, "Braking", fontsize=7, fontweight='bold', color='#ef4444', ha='center', zorder=5)
+    ax.text(mid_prop, max_y * 0.94, "Propulsive", fontsize=7, fontweight='bold', color='#22c55e', ha='center', zorder=5)
 
-    # Add Pictogram Images to Matplotlib Axis
+    # Add Pictogram Images to Matplotlib Axis with Z-Order 10 for True Transparency
     pics_config = [
         ("Standing.png", max(t[0], t_start - 0.15)),
         ("UP.png", mid_unweight),
@@ -98,7 +97,13 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
     for fname, x_pos in pics_config:
         img_box = get_pictogram_image(fname)
         if img_box:
-            ab = AnnotationBbox(img_box, (x_pos, max_y * 0.72), frameon=False, pad=0)
+            ab = AnnotationBbox(
+                img_box, 
+                (x_pos, max_y * 0.72), 
+                frameon=False, 
+                pad=0,
+                zorder=10
+            )
             ax.add_artist(ab)
 
     ax.set_title("FORCE-TIME ANALYSIS & SUB-PHASES", fontsize=9, fontweight='bold', color='#1a0f30')
@@ -109,7 +114,7 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
 
     plt.tight_layout()
     img_buffer = io.BytesIO()
-    plt.savefig(img_buffer, format='png', dpi=200)
+    plt.savefig(img_buffer, format='png', dpi=200, transparent=True)
     plt.close(fig_plt)
     img_buffer.seek(0)
 
