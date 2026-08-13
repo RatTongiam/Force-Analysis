@@ -154,11 +154,12 @@ if t is not None and f_total is not None and len(f_total) > 0:
         st.session_state.t_takeoff = float(t[tIdx_auto])
         st.session_state.is_confirmed = False
 
-    # Safety Clamping
-    st.session_state.t_start = max(t_min, min(st.session_state.t_start, t_max))
-    st.session_state.t_braking = max(st.session_state.t_start, min(st.session_state.t_braking, t_max))
-    st.session_state.t_split = max(st.session_state.t_braking, min(st.session_state.t_split, t_max))
-    st.session_state.t_takeoff = max(st.session_state.t_split, min(st.session_state.t_takeoff, t_max))
+    # Order & Clamping Safeguard
+    dt_val = float(dt)
+    st.session_state.t_start = max(t_min, min(st.session_state.t_start, t_max - 3 * dt_val))
+    st.session_state.t_braking = max(st.session_state.t_start + dt_val, min(st.session_state.t_braking, t_max - 2 * dt_val))
+    st.session_state.t_split = max(st.session_state.t_braking + dt_val, min(st.session_state.t_split, t_max - dt_val))
+    st.session_state.t_takeoff = max(st.session_state.t_split + dt_val, min(st.session_state.t_takeoff, t_max))
 
     t_start = st.session_state.t_start
     t_braking = st.session_state.t_braking
@@ -250,40 +251,41 @@ if t is not None and f_total is not None and len(f_total) > 0:
     
     st.plotly_chart(fig_force, width="stretch")
 
-    # 2. PHASE BOUNDARY TIMELINE CONTROLS & CONFIRMATION BUTTON
+    # 2. PHASE BOUNDARY TIMELINE CONTROLS WITH STRICT MIN-MAX MARGINS
     st.markdown("##### 🎚️ Phase Boundary Timeline Controls")
 
     c1, c2, c3, c4 = st.columns(4)
 
     with c1:
-        v1_max = min(t_braking, t_max)
-        v1_val = min(t_start, v1_max)
-        v1_num = st.number_input("1. Start Onset (s)", min_value=t_min, max_value=v1_max, value=v1_val, step=float(dt), format="%.3f", key="num_1")
-        v1_slide = st.slider("1. Start Onset Slider", min_value=t_min, max_value=v1_max, value=v1_num, step=float(dt), format="%.3f", label_visibility="collapsed", key="slide_1")
+        v1_min = t_min
+        v1_max = max(v1_min + dt_val, t_braking - dt_val)
+        v1_val = max(v1_min, min(t_start, v1_max))
+        v1_num = st.number_input("1. Start Onset (s)", min_value=v1_min, max_value=v1_max, value=v1_val, step=dt_val, format="%.3f", key="num_1")
+        v1_slide = st.slider("1. Start Onset Slider", min_value=v1_min, max_value=v1_max, value=v1_num, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_1")
         new_start = v1_slide
 
     with c2:
-        v2_min = new_start
-        v2_max = min(t_split, t_max)
+        v2_min = new_start + dt_val
+        v2_max = max(v2_min + dt_val, t_split - dt_val)
         v2_val = max(v2_min, min(t_braking, v2_max))
-        v2_num = st.number_input("2. Braking / Min Force (s)", min_value=v2_min, max_value=v2_max, value=v2_val, step=float(dt), format="%.3f", key="num_2")
-        v2_slide = st.slider("2. Braking Slider", min_value=v2_min, max_value=v2_max, value=v2_num, step=float(dt), format="%.3f", label_visibility="collapsed", key="slide_2")
+        v2_num = st.number_input("2. Braking / Min Force (s)", min_value=v2_min, max_value=v2_max, value=v2_val, step=dt_val, format="%.3f", key="num_2")
+        v2_slide = st.slider("2. Braking Slider", min_value=v2_min, max_value=v2_max, value=v2_num, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_2")
         new_braking = v2_slide
 
     with c3:
-        v3_min = new_braking
-        v3_max = min(t_takeoff, t_max)
+        v3_min = new_braking + dt_val
+        v3_max = max(v3_min + dt_val, t_takeoff - dt_val)
         v3_val = max(v3_min, min(t_split, v3_max))
-        v3_num = st.number_input("3. Propulsive / V=0 (s)", min_value=v3_min, max_value=v3_max, value=v3_val, step=float(dt), format="%.3f", key="num_3")
-        v3_slide = st.slider("3. Propulsive Slider", min_value=v3_min, max_value=v3_max, value=v3_num, step=float(dt), format="%.3f", label_visibility="collapsed", key="slide_3")
+        v3_num = st.number_input("3. Propulsive / V=0 (s)", min_value=v3_min, max_value=v3_max, value=v3_val, step=dt_val, format="%.3f", key="num_3")
+        v3_slide = st.slider("3. Propulsive Slider", min_value=v3_min, max_value=v3_max, value=v3_num, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_3")
         new_split = v3_slide
 
     with c4:
-        v4_min = new_split
-        v4_max = t_max
+        v4_min = new_split + dt_val
+        v4_max = max(v4_min + dt_val, t_max)
         v4_val = max(v4_min, min(t_takeoff, v4_max))
-        v4_num = st.number_input("4. Take-off (s)", min_value=v4_min, max_value=v4_max, value=v4_val, step=float(dt), format="%.3f", key="num_4")
-        v4_slide = st.slider("4. Take-off Slider", min_value=v4_min, max_value=v4_max, value=v4_num, step=float(dt), format="%.3f", label_visibility="collapsed", key="slide_4")
+        v4_num = st.number_input("4. Take-off (s)", min_value=v4_min, max_value=v4_max, value=v4_val, step=dt_val, format="%.3f", key="num_4")
+        v4_slide = st.slider("4. Take-off Slider", min_value=v4_min, max_value=v4_max, value=v4_num, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_4")
         new_takeoff = v4_slide
 
     if (new_start, new_braking, new_split, new_takeoff) != (t_start, t_braking, t_split, t_takeoff):
