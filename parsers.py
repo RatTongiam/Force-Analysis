@@ -154,3 +154,37 @@ def parse_single_csv_cforce(uploaded_file):
     f_right = np.abs(df['right'].values.astype(float))
     
     return dt, t, f_left, f_right, f_total
+
+def parse_musclelab_csv(uploaded_file):
+    uploaded_file.seek(0)
+    raw_text = uploaded_file.getvalue().decode('utf-8', errors='ignore')
+    
+    df = pd.read_csv(io.StringIO(raw_text), sep=';')
+    
+    col_left = [c for c in df.columns if 'Left Newton' in c or ('Left' in c and 'Newton' in c)]
+    col_right = [c for c in df.columns if 'Right Newton' in c or ('Right' in c and 'Newton' in c)]
+    
+    if not col_left or not col_right:
+        raise ValueError("ไม่พบคอลัมน์ข้อมูลแรง (Newton) ของ MuscleLab Force Plate")
+        
+    f_left_raw = pd.to_numeric(df[col_left[0]], errors='coerce').values
+    f_right_raw = pd.to_numeric(df[col_right[0]], errors='coerce').values
+    
+    dt = 0.001  # 1000 Hz
+    
+    # ตรวจหาตำแหน่งที่มีข้อมูลแรงสมบูรณ์ทั้งสองแผ่น
+    valid_mask = ~np.isnan(f_left_raw) & ~np.isnan(f_right_raw) & (f_left_raw > 0) & (f_right_raw > 0)
+    valid_indices = np.where(valid_mask)[0]
+    
+    if len(valid_indices) > 0:
+        last_valid_idx = valid_indices[-1]
+        f_left = np.abs(f_left_raw[:last_valid_idx + 1])
+        f_right = np.abs(f_right_raw[:last_valid_idx + 1])
+    else:
+        f_left = np.abs(np.nan_to_num(f_left_raw))
+        f_right = np.abs(np.nan_to_num(f_right_raw))
+        
+    f_total = f_left + f_right
+    t = np.arange(len(f_total)) * dt
+    
+    return dt, t, f_left, f_right, f_total
