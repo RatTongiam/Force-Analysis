@@ -140,7 +140,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     fig_force.add_trace(go.Scatter(x=t, y=sr, name="Right Limb", line=dict(color='#f87171', width=0.8)))
     fig_force.add_trace(go.Scatter(x=t, y=sf, name="Total Force", line=dict(color='#4d2994', width=1.2)))
 
-    # Phase Rectangles (No Overlapping Labels)
+    # Phase Rectangles
     fig_force.add_vrect(x0=t_start, x1=t_braking, fillcolor="rgba(234, 179, 8, 0.12)", line_width=0)
     fig_force.add_vrect(x0=t_braking, x1=t_split, fillcolor="rgba(239, 68, 68, 0.12)", line_width=0)
     fig_force.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="rgba(34, 197, 94, 0.12)", line_width=0)
@@ -158,7 +158,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
 
     max_y = float(np.max(sf)) * 1.05
 
-    # Text Annotations placed at midpoint & staggered y-heights to eliminate overlap
     fig_force.add_annotation(x=mid_unweight, y=max_y * 0.98, text="Unweighting", showarrow=False, font=dict(size=11, color="#ca8a04", family="Arial Bold"))
     fig_force.add_annotation(x=mid_brake, y=max_y * 0.90, text="Braking", showarrow=False, font=dict(size=11, color="#ef4444", family="Arial Bold"))
     fig_force.add_annotation(x=mid_prop, y=max_y * 0.98, text="Propulsive", showarrow=False, font=dict(size=11, color="#22c55e", family="Arial Bold"))
@@ -174,27 +173,30 @@ if t is not None and f_total is not None and len(f_total) > 0:
     
     st.plotly_chart(fig_force, width="stretch")
 
-    # 2. CONTINUOUS TIMELINE CONTROL (SINGLE VISUAL LINE CONTROL)
+    # 2. PHASE BOUNDARY TIMELINE CONTROLS (NUMBER INPUT + SLIDER COMBO)
     st.markdown("##### 🎚️ Phase Boundary Timeline Controls")
-    
-    # CSS Custom Styling to render 4 sliders closely formatted on a unified line
-    st.markdown("""
-        <style>
-        .stSlider { padding-top: 0px; padding-bottom: 0px; }
-        div[data-testid="stHorizontalBlock"] { gap: 0.5rem; }
-        </style>
-    """, unsafe_allow_html=True)
 
     c1, c2, c3, c4 = st.columns(4)
 
     with c1:
-        new_start = st.number_input("1. Start Onset (s)", min_value=t_min, max_value=t_braking, value=t_start, step=float(dt), format="%.3f")
+        v1_num = st.number_input("1. Start Onset (s)", min_value=t_min, max_value=t_braking, value=t_start, step=float(dt), format="%.3f", key="num_1")
+        v1_slide = st.slider("1. Start Onset Slider", min_value=t_min, max_value=t_braking, value=v1_num, step=float(dt), format="%.3f", label_visibility="collapsed", key="slide_1")
+        new_start = v1_slide
+
     with c2:
-        new_braking = st.number_input("2. Braking / Min Force (s)", min_value=new_start, max_value=t_split, value=t_braking, step=float(dt), format="%.3f")
+        v2_num = st.number_input("2. Braking / Min Force (s)", min_value=new_start, max_value=t_split, value=t_braking, step=float(dt), format="%.3f", key="num_2")
+        v2_slide = st.slider("2. Braking Slider", min_value=new_start, max_value=t_split, value=v2_num, step=float(dt), format="%.3f", label_visibility="collapsed", key="slide_2")
+        new_braking = v2_slide
+
     with c3:
-        new_split = st.number_input("3. Propulsive / V=0 (s)", min_value=new_braking, max_value=t_takeoff, value=t_split, step=float(dt), format="%.3f")
+        v3_num = st.number_input("3. Propulsive / V=0 (s)", min_value=new_braking, max_value=t_takeoff, value=t_split, step=float(dt), format="%.3f", key="num_3")
+        v3_slide = st.slider("3. Propulsive Slider", min_value=new_braking, max_value=t_takeoff, value=v3_num, step=float(dt), format="%.3f", label_visibility="collapsed", key="slide_3")
+        new_split = v3_slide
+
     with c4:
-        new_takeoff = st.number_input("4. Take-off (s)", min_value=new_split, max_value=t_max, value=t_takeoff, step=float(dt), format="%.3f")
+        v4_num = st.number_input("4. Take-off (s)", min_value=new_split, max_value=t_max, value=t_takeoff, step=float(dt), format="%.3f", key="num_4")
+        v4_slide = st.slider("4. Take-off Slider", min_value=new_split, max_value=t_max, value=v4_num, step=float(dt), format="%.3f", label_visibility="collapsed", key="slide_4")
+        new_takeoff = v4_slide
 
     if (new_start, new_braking, new_split, new_takeoff) != (t_start, t_braking, t_split, t_takeoff):
         st.session_state.t_start = new_start
