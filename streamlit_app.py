@@ -50,10 +50,12 @@ else:
 threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
 
 dt, t, f_left, f_right, f_total = None, None, None, None, None
+file_signature = None
 
 if data_mode == "MuscleLab CSV":
     file_ml = st.sidebar.file_uploader("Upload MuscleLab CSV File (.csv)", type=["csv"])
     if file_ml:
+        file_signature = f"ML_{file_ml.name}_{file_ml.size}"
         try:
             dt, t, f_left, f_right, f_total = parse_musclelab_csv(file_ml)
         except Exception as e:
@@ -62,6 +64,7 @@ if data_mode == "MuscleLab CSV":
 elif data_mode == "Single JSON (QTM)":
     file_json = st.sidebar.file_uploader("Upload QTM JSON File (.json)", type=["json"])
     if file_json:
+        file_signature = f"QTM_JSON_{file_json.name}_{file_json.size}"
         try:
             plates = parse_qtm_json(file_json)
             if len(plates) >= 2:
@@ -102,6 +105,7 @@ elif data_mode == "Dual TSV (QTM)":
     side_b = st.sidebar.selectbox("Assign Side File B", ["left", "right"], index=1)
     
     if file_a and file_b:
+        file_signature = f"TSV_{file_a.name}_{file_b.name}_{file_a.size}_{file_b.size}"
         try:
             dt, data_a, fz_idx_a = parse_tsv(file_a)
             _, data_b, fz_idx_b = parse_tsv(file_b)
@@ -119,6 +123,7 @@ elif data_mode == "Dual TSV (QTM)":
 elif data_mode == "VALD ForceDecks CSV":
     file_vald = st.sidebar.file_uploader("Upload VALD ForceDecks File (.csv / .tsv)", type=["csv", "tsv"])
     if file_vald:
+        file_signature = f"VALD_{file_vald.name}_{file_vald.size}"
         try:
             dt, t, f_left, f_right, f_total = parse_vald_forcedecks_exact(file_vald)
         except Exception as e:
@@ -127,6 +132,7 @@ elif data_mode == "VALD ForceDecks CSV":
 elif data_mode == "C-Force Performance CSV":
     file_csv = st.sidebar.file_uploader("Upload Single CSV File (.csv)", type=["csv"])
     if file_csv:
+        file_signature = f"CFORCE_{file_csv.name}_{file_csv.size}"
         try:
             dt, t, f_left, f_right, f_total = parse_single_csv_cforce(file_csv)
         except Exception as e:
@@ -149,12 +155,16 @@ if t is not None and f_total is not None and len(f_total) > 0:
     t_min = float(t[0])
     t_max = float(t[-1])
 
-    if "t_start" not in st.session_state or st.sidebar.button("🔄 Reset Phases"):
+    # ตรวจสอบการเปลี่ยนไฟล์หรือกด Reset เพื่อบังคับคำนวณ Phase ใหม่
+    is_file_changed = (st.session_state.get("current_file_sig") != file_signature)
+    
+    if is_file_changed or "t_start" not in st.session_state or st.sidebar.button("🔄 Reset Phases"):
         st.session_state.t_start = float(t[sIdx_auto])
         st.session_state.t_braking = float(t[bIdx_auto])
         st.session_state.t_split = float(t[zIdx_auto])
         st.session_state.t_takeoff = float(t[tIdx_auto])
         st.session_state.is_confirmed = False
+        st.session_state.current_file_sig = file_signature
 
     st.session_state.t_start = max(t_min, min(st.session_state.t_start, t_max - 3 * dt_val))
     st.session_state.t_braking = max(st.session_state.t_start + dt_val, min(st.session_state.t_braking, t_max - 2 * dt_val))
@@ -383,7 +393,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
         margin=dict(l=40, r=40, t=50, b=20)
     )
     fig_deficit.update_xaxes(range=[crop_x_min, crop_x_max])
-    st.plotly_chart(fig_force, width="stretch")
+    st.plotly_chart(fig_deficit, width="stretch")
 
     st.markdown("### Standard Biomechanical Analysis Report (Anicic et al., 2023)")
     table_rows = []
