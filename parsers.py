@@ -5,9 +5,15 @@ import io
 import re
 
 def parse_tsv(uploaded_file):
+    """
+    อ่านไฟล์ TSV จาก QTM Dual Force Plate
+    รองรับทั้งไฟล์แบบ 9 คอลัมน์ (ไม่มี Frame/Time) และ 11 คอลัมน์ (มี Frame/Time)
+    """
+    uploaded_file.seek(0)
     lines = uploaded_file.getvalue().decode('utf-8', errors='ignore').splitlines()
     freq = 2000.0
     data = []
+    
     for line in lines:
         line_str = line.strip()
         if not line_str:
@@ -20,18 +26,35 @@ def parse_tsv(uploaded_file):
                 except ValueError:
                     pass
             continue
+            
         parts = line_str.split('\t')
         if len(parts) >= 3 and not line_str.startswith("FORCE_PLATE"):
             try:
                 vals = [float(p) for p in parts]
-                data.append(vals)
+                # กรองไม่เอาบรรทัดข้อมูลที่มีค่า NaN ติดมา
+                if not any(np.isnan(v) for v in vals):
+                    data.append(vals)
             except ValueError:
                 pass
+
     dt = 1.0 / freq
     arr = np.array(data)
-    return dt, arr
+    num_cols = arr.shape[1] if len(arr) > 0 else 0
+
+    # Auto-detect ตำแหน่งคอลัมน์ Fz ตามประเภทโครงสร้างไฟล์ TSV
+    if num_cols >= 11:
+        fz_idx = 4  # โครงสร้างแบบมี Frame, Time, Fx, Fy, Fz...
+    elif num_cols == 9:
+        fz_idx = 2  # โครงสร้างแบบไม่มี Frame/Time (เริ่มที่ Fx, Fy, Fz...)
+    else:
+        fz_idx = 2  # Fallback Default
+
+    return dt, arr, fz_idx
 
 def parse_vald_forcedecks_exact(uploaded_file):
+    """
+    อ่านไฟล์ CSV/TSV จาก VALD ForceDecks
+    """
     uploaded_file.seek(0)
     raw_text = uploaded_file.getvalue().decode('utf-8', errors='ignore')
     lines = raw_text.splitlines()
@@ -71,6 +94,9 @@ def parse_vald_forcedecks_exact(uploaded_file):
         return dt, t, f_left, f_right, f_total
 
 def parse_qtm_json(uploaded_file):
+    """
+    อ่านไฟล์ Single JSON จาก Qualisys QTM
+    """
     uploaded_file.seek(0)
     content = json.load(uploaded_file)
     root = content[0] if isinstance(content, list) else content
@@ -112,6 +138,9 @@ def parse_qtm_json(uploaded_file):
     return plate_data
 
 def parse_single_csv_cforce(uploaded_file):
+    """
+    อ่านไฟล์ Single CSV จาก C-Force Performance
+    """
     uploaded_file.seek(0)
     lines = uploaded_file.getvalue().decode('utf-8', errors='ignore').splitlines()
     
@@ -156,6 +185,9 @@ def parse_single_csv_cforce(uploaded_file):
     return dt, t, f_left, f_right, f_total
 
 def parse_musclelab_csv(uploaded_file):
+    """
+    อ่านไฟล์ CSV จาก MuscleLab Force Plate
+    """
     uploaded_file.seek(0)
     raw_text = uploaded_file.getvalue().decode('utf-8', errors='ignore')
     
