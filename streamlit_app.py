@@ -230,12 +230,32 @@ if t is not None and f_total is not None and len(f_total) > 0:
         mime="application/pdf"
     )
 
+    # 3. L/R ASYMMETRY % GRAPH WITH HIGHLIGHT PHASES & 50% INCREASED HEIGHT
     deficits = np.where(sf >= 50, ((sl - sr) / np.maximum(sl, sr)) * 100, 0)
     fig_deficit = go.Figure()
+
+    # Phase Rectangles for Asymmetry Graph
+    fig_deficit.add_vrect(x0=t_start, x1=t_braking, fillcolor="rgba(234, 179, 8, 0.12)", line_width=0)
+    fig_deficit.add_vrect(x0=t_braking, x1=t_split, fillcolor="rgba(239, 68, 68, 0.12)", line_width=0)
+    fig_deficit.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="rgba(34, 197, 94, 0.12)", line_width=0)
+
+    # Vertical Phase Boundary Lines
+    fig_deficit.add_vline(x=t_start, line_width=1.5, line_dash="dash", line_color="#ca8a04")
+    fig_deficit.add_vline(x=t_braking, line_width=1.5, line_dash="dash", line_color="#ef4444")
+    fig_deficit.add_vline(x=t_split, line_width=1.5, line_dash="dash", line_color="#22c55e")
+    fig_deficit.add_vline(x=t_takeoff, line_width=1.5, line_dash="dash", line_color="#dc2626")
+
     fig_deficit.add_trace(go.Scatter(x=t, y=deficits, name="Asymmetry", fill='tozeroy', fillcolor='rgba(77, 41, 148, 0.15)', line=dict(color='#4d2994', width=1.5)))
     
     fig_deficit.add_hrect(y0=-threshold_alert, y1=threshold_alert, fillcolor="rgba(34, 197, 94, 0.15)", line_width=0)
-    fig_deficit.update_layout(title="L/R ASYMMETRY % (Threshold Alert)", xaxis_title="Time (s)", yaxis_title="Deficit %", yaxis_range=[-55, 55], height=240)
+    fig_deficit.update_layout(
+        title="L/R ASYMMETRY % (Threshold Alert)", 
+        xaxis_title="Time (s)", 
+        yaxis_title="Deficit %", 
+        yaxis_range=[-55, 55], 
+        height=360,  # เพิ่มความสูงขึ้น 50% (จากเดิม 240 -> 360)
+        margin=dict(l=40, r=40, t=50, b=20)
+    )
     fig_deficit.update_xaxes(range=[t_min, t_max])
     st.plotly_chart(fig_deficit, width="stretch")
 
