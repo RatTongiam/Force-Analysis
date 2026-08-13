@@ -11,8 +11,15 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 def load_image_from_github(url):
     try:
         req = urllib.request.urlopen(url, timeout=3)
-        img = PILImage.open(io.BytesIO(req.read()))
-        return img
+        img = PILImage.open(io.BytesIO(req.read())).convert("RGBA")
+        
+        # แปลงพื้นหลังสีขาวให้โปร่งใส (Transparent Background)
+        arr = np.array(img)
+        # ตรวจสอบพิกเซลที่เป็นสีขาว (หรือใกล้เคียงขาว > 240) แล้วปรับ Alpha เป็น 0
+        white_pixels = (arr[:, :, 0] > 240) & (arr[:, :, 1] > 240) & (arr[:, :, 2] > 240)
+        arr[white_pixels, 3] = 0
+        
+        return PILImage.fromarray(arr, mode="RGBA")
     except Exception:
         return None
 
@@ -55,7 +62,7 @@ def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeo
     ax.grid(True, linestyle=':', alpha=0.5)
     ax.legend(loc='upper right', fontsize=8)
 
-    # Load and Plot Pictograms (คนตัวอย่าง) บน Matplotlib
+    # Load and Plot Pictograms with Transparent Background
     mid_unweight = (t_start + t_braking) / 2.0
     mid_brake = (t_braking + t_split) / 2.0
     mid_prop = (t_split + t_takeoff) / 2.0
@@ -75,7 +82,6 @@ def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeo
     for pic in pic_configs:
         img = load_image_from_github(f"{github_base}/{pic['file']}")
         if img is not None:
-            # คำนวณตำแหน่งพิกัดสำหรับวางรูปภาพบน Axes
             im_w = (x_end - x_start) * 0.08
             im_h = max_y * 0.20
             im_x = pic["x"] - im_w / 2.0
@@ -84,7 +90,7 @@ def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeo
 
     plt.tight_layout()
     img_buf = io.BytesIO()
-    plt.savefig(img_buf, format='png', bbox_inches='tight', dpi=200)
+    plt.savefig(img_buf, format='png', bbox_inches='tight', dpi=200, transparent=True)
     plt.close(fig)
     img_buf.seek(0)
     return img_buf
@@ -141,17 +147,14 @@ def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_ta
     
     story = []
     
-    # Title & Subtitle
     story.append(Paragraph("Free JumpAnz Team - Biomechanics Analysis", title_style))
     story.append(Paragraph("PRIMA MOTION TECHNOLOGY — Technology that unlocks scientific insight", subtitle_style))
     story.append(Spacer(1, 6))
     
-    # Chart with Pictograms
     chart_buf = create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, crop_x_min, crop_x_max)
     story.append(RLImage(chart_buf, width=535, height=185))
     story.append(Spacer(1, 6))
     
-    # Table Data
     table_data = [[
         Paragraph("Biomechanical Metric", header_style),
         Paragraph("Left", header_style),
