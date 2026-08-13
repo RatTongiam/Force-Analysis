@@ -165,6 +165,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
         st.session_state.is_confirmed = False
         st.session_state.current_file_sig = file_signature
 
+    # Strict Order Safeguard
     st.session_state.t_start = max(t_min, min(st.session_state.t_start, t_max - 3 * dt_val))
     st.session_state.t_braking = max(st.session_state.t_start + dt_val, min(st.session_state.t_braking, t_max - 2 * dt_val))
     st.session_state.t_split = max(st.session_state.t_braking + dt_val, min(st.session_state.t_split, t_max - dt_val))
@@ -183,13 +184,15 @@ if t is not None and f_total is not None and len(f_total) > 0:
         if len(non_air) > 0:
             t_curr_landing = float(t[non_air[0]])
 
-    # ปรับพารามิเตอร์ Crop Margin: ก่อน start 1.0s และ หลัง takeoff 1.5s
-    if st.session_state.get("is_confirmed", False):
-        crop_x_min = max(t_min, t_start - 1.0)
-        crop_x_max = min(t_max, t_takeoff + 1.5)
+    crop_x_min = max(t_min, t_start - 1.0)
+    crop_x_max = min(t_max, t_takeoff + 1.5)
+
+    if not st.session_state.get("is_confirmed", False):
+        display_x_min = t_min
+        display_x_max = t_max
     else:
-        crop_x_min = t_min
-        crop_x_max = t_max
+        display_x_min = crop_x_min
+        display_x_max = crop_x_max
 
     # 1. GRAPH WITH HIGHLIGHT PHASES & PICTOGRAMS
     fig_force = go.Figure()
@@ -225,7 +228,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     github_base = "https://raw.githubusercontent.com/RatTongiam/Force-Analysis/main"
 
     pictograms = [
-        {"url": f"{github_base}/Standing.png", "x": max(crop_x_min + 0.1, t_start - 0.2)},
+        {"url": f"{github_base}/Standing.png", "x": max(display_x_min + 0.1, t_start - 0.2)},
         {"url": f"{github_base}/UP.png", "x": mid_unweight},
         {"url": f"{github_base}/BP.png", "x": mid_brake},
         {"url": f"{github_base}/PP.png", "x": mid_prop},
@@ -256,12 +259,33 @@ if t is not None and f_total is not None and len(f_total) > 0:
         height=480,
         margin=dict(l=40, r=40, t=50, b=20)
     )
-    fig_force.update_xaxes(range=[crop_x_min, crop_x_max])
+    fig_force.update_xaxes(range=[display_x_min, display_x_max])
     
     st.plotly_chart(fig_force, width="stretch")
 
-    # 2. PHASE BOUNDARY TIMELINE CONTROLS
+    # 2. PHASE BOUNDARY TIMELINE CONTROLS WITH 2-WAY SYNC CALLBACKS
     st.markdown("##### 🎚️ Phase Boundary Timeline Controls")
+
+    # Callbacks สำหรับ Sync ค่าเมื่อผู้ใช้พิมพ์ใน Number Input หรือเลื่อน Slider
+    def update_v1_num():
+        st.session_state.t_start = st.session_state.num_1
+    def update_v1_slide():
+        st.session_state.t_start = st.session_state.slide_1
+
+    def update_v2_num():
+        st.session_state.t_braking = st.session_state.num_2
+    def update_v2_slide():
+        st.session_state.t_braking = st.session_state.slide_2
+
+    def update_v3_num():
+        st.session_state.t_split = st.session_state.num_3
+    def update_v3_slide():
+        st.session_state.t_split = st.session_state.slide_3
+
+    def update_v4_num():
+        st.session_state.t_takeoff = st.session_state.num_4
+    def update_v4_slide():
+        st.session_state.t_takeoff = st.session_state.slide_4
 
     c1, c2, c3, c4 = st.columns(4)
 
@@ -269,40 +293,33 @@ if t is not None and f_total is not None and len(f_total) > 0:
         v1_min = t_min
         v1_max = max(v1_min + dt_val, t_braking - dt_val)
         v1_val = max(v1_min, min(t_start, v1_max))
-        v1_num = st.number_input("1. Start Onset (s)", min_value=v1_min, max_value=v1_max, value=v1_val, step=dt_val, format="%.3f", key="num_1")
-        v1_slide = st.slider("1. Start Onset Slider", min_value=v1_min, max_value=v1_max, value=v1_num, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_1")
-        new_start = v1_slide
+        
+        st.number_input("1. Start Onset (s)", min_value=v1_min, max_value=v1_max, value=v1_val, step=dt_val, format="%.3f", key="num_1", on_change=update_v1_num)
+        st.slider("1. Start Onset Slider", min_value=v1_min, max_value=v1_max, value=v1_val, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_1", on_change=update_v1_slide)
 
     with c2:
-        v2_min = max(t_min + dt_val, new_start + dt_val)
+        v2_min = max(t_min + dt_val, t_start + dt_val)
         v2_max = max(v2_min + dt_val, t_split - dt_val)
         v2_val = max(v2_min, min(t_braking, v2_max))
-        v2_num = st.number_input("2. Braking / Min Force (s)", min_value=v2_min, max_value=v2_max, value=v2_val, step=dt_val, format="%.3f", key="num_2")
-        v2_slide = st.slider("2. Braking Slider", min_value=v2_min, max_value=v2_max, value=v2_num, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_2")
-        new_braking = v2_slide
+        
+        st.number_input("2. Braking / Min Force (s)", min_value=v2_min, max_value=v2_max, value=v2_val, step=dt_val, format="%.3f", key="num_2", on_change=update_v2_num)
+        st.slider("2. Braking Slider", min_value=v2_min, max_value=v2_max, value=v2_val, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_2", on_change=update_v2_slide)
 
     with c3:
-        v3_min = max(t_min + 2 * dt_val, new_braking + dt_val)
+        v3_min = max(t_min + 2 * dt_val, t_braking + dt_val)
         v3_max = max(v3_min + dt_val, t_takeoff - dt_val)
         v3_val = max(v3_min, min(t_split, v3_max))
-        v3_num = st.number_input("3. Propulsive / V=0 (s)", min_value=v3_min, max_value=v3_max, value=v3_val, step=dt_val, format="%.3f", key="num_3")
-        v3_slide = st.slider("3. Propulsive Slider", min_value=v3_min, max_value=v3_max, value=v3_num, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_3")
-        new_split = v3_slide
+        
+        st.number_input("3. Propulsive / V=0 (s)", min_value=v3_min, max_value=v3_max, value=v3_val, step=dt_val, format="%.3f", key="num_3", on_change=update_v3_num)
+        st.slider("3. Propulsive Slider", min_value=v3_min, max_value=v3_max, value=v3_val, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_3", on_change=update_v3_slide)
 
     with c4:
-        v4_min = max(t_min + 3 * dt_val, new_split + dt_val)
+        v4_min = max(t_min + 3 * dt_val, t_split + dt_val)
         v4_max = max(v4_min + dt_val, t_max)
         v4_val = max(v4_min, min(t_takeoff, v4_max))
-        v4_num = st.number_input("4. Take-off (s)", min_value=v4_min, max_value=v4_max, value=v4_val, step=dt_val, format="%.3f", key="num_4")
-        v4_slide = st.slider("4. Take-off Slider", min_value=v4_min, max_value=v4_max, value=v4_num, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_4")
-        new_takeoff = v4_slide
-
-    if (new_start, new_braking, new_split, new_takeoff) != (t_start, t_braking, t_split, t_takeoff):
-        st.session_state.t_start = new_start
-        st.session_state.t_braking = new_braking
-        st.session_state.t_split = new_split
-        st.session_state.t_takeoff = new_takeoff
-        st.rerun()
+        
+        st.number_input("4. Take-off (s)", min_value=v4_min, max_value=v4_max, value=v4_val, step=dt_val, format="%.3f", key="num_4", on_change=update_v4_num)
+        st.slider("4. Take-off Slider", min_value=v4_min, max_value=v4_max, value=v4_val, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_4", on_change=update_v4_slide)
 
     col_btn1, col_btn2 = st.columns([1, 4])
     with col_btn1:
@@ -316,10 +333,10 @@ if t is not None and f_total is not None and len(f_total) > 0:
                 st.rerun()
 
     # Index Calculations
-    sIdx = min(max(0, int(round((new_start - t[0]) / dt_val))), n_samples - 1)
-    bIdx = min(max(0, int(round((new_braking - t[0]) / dt_val))), n_samples - 1)
-    zIdx = min(max(0, int(round((new_split - t[0]) / dt_val))), n_samples - 1)
-    tIdx = min(max(0, int(round((new_takeoff - t[0]) / dt_val))), n_samples - 1)
+    sIdx = min(max(0, int(round((t_start - t[0]) / dt_val))), n_samples - 1)
+    bIdx = min(max(0, int(round((t_braking - t[0]) / dt_val))), n_samples - 1)
+    zIdx = min(max(0, int(round((t_split - t[0]) / dt_val))), n_samples - 1)
+    tIdx = min(max(0, int(round((t_takeoff - t[0]) / dt_val))), n_samples - 1)
     lIdx = min(max(0, int(round((t_curr_landing - t[0]) / dt_val))), n_samples - 1)
 
     report = calculate_metrics(
@@ -327,7 +344,10 @@ if t is not None and f_total is not None and len(f_total) > 0:
         filter_type=filter_type, cutoff=cutoff_freq
     )
 
-    pdf_bytes = generate_pdf_report(report, t, sf, sl, sr, new_start, new_braking, new_split, new_takeoff, threshold_alert=threshold_alert)
+    pdf_bytes = generate_pdf_report(
+        report, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, 
+        threshold_alert=threshold_alert, crop_x_min=crop_x_min, crop_x_max=crop_x_max
+    )
     st.sidebar.markdown("---")
     st.sidebar.download_button(
         label="📥 Download A4 PDF Report",
@@ -391,7 +411,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
         height=360,
         margin=dict(l=40, r=40, t=50, b=20)
     )
-    fig_deficit.update_xaxes(range=[crop_x_min, crop_x_max])
+    fig_deficit.update_xaxes(range=[display_x_min, display_x_max])
     st.plotly_chart(fig_deficit, width="stretch")
 
     st.markdown("### Standard Biomechanical Analysis Report (Anicic et al., 2023)")
