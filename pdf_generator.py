@@ -7,7 +7,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 
 def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, crop_x_min=None, crop_x_max=None):
-    fig, ax = plt.subplots(figsize=(8.5, 3.2), dpi=200)
+    fig, ax = plt.subplots(figsize=(8.0, 2.6), dpi=200)
     
     # Plot Lines
     ax.plot(t, sl, color='#818cf8', linewidth=1.0, label='Left Limb')
@@ -41,13 +41,13 @@ def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeo
     ax.set_ylim(0, max_y)
     ax.set_xlabel('Time (s)', fontsize=9)
     ax.set_ylabel('Force (N)', fontsize=9)
-    ax.set_title('FORCE-TIME ANALYSIS & SUB-PHASES', fontsize=11, fontweight='bold', color='#1e1b4b', pad=10)
+    ax.set_title('FORCE-TIME ANALYSIS & SUB-PHASES', fontsize=11, fontweight='bold', color='#1e1b4b', pad=8)
     ax.grid(True, linestyle=':', alpha=0.5)
     ax.legend(loc='upper right', fontsize=8)
     
     plt.tight_layout()
     img_buf = io.BytesIO()
-    plt.savefig(img_buf, format='png', bbox_inches='tight')
+    plt.savefig(img_buf, format='png', bbox_inches='tight', dpi=200)
     plt.close(fig)
     img_buf.seek(0)
     return img_buf
@@ -59,8 +59,8 @@ def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_ta
         pagesize=A4,
         leftMargin=30,
         rightMargin=30,
-        topMargin=30,
-        bottomMargin=30
+        topMargin=25,
+        bottomMargin=25
     )
     
     styles = getSampleStyleSheet()
@@ -68,16 +68,16 @@ def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_ta
         'DocTitle',
         parent=styles['Normal'],
         fontName='Helvetica-Bold',
-        fontSize=16,
-        leading=20,
+        fontSize=15,
+        leading=18,
         textColor=colors.HexColor('#1e1b4b')
     )
     subtitle_style = ParagraphStyle(
         'DocSubtitle',
         parent=styles['Normal'],
         fontName='Helvetica',
-        fontSize=9,
-        leading=12,
+        fontSize=8.5,
+        leading=11,
         textColor=colors.HexColor('#64748b')
     )
     header_style = ParagraphStyle(
@@ -90,15 +90,15 @@ def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_ta
     cell_style = ParagraphStyle(
         'CellStyle',
         fontName='Helvetica',
-        fontSize=8,
-        leading=10,
+        fontSize=7.5,
+        leading=9.5,
         textColor=colors.HexColor('#1e293b')
     )
     cat_style = ParagraphStyle(
         'CatStyle',
         fontName='Helvetica-Bold',
-        fontSize=8.5,
-        leading=11,
+        fontSize=8,
+        leading=10,
         textColor=colors.HexColor('#4d2994')
     )
     
@@ -107,12 +107,12 @@ def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_ta
     # Title & Subtitle
     story.append(Paragraph("Free JumpAnz Team - Biomechanics Analysis", title_style))
     story.append(Paragraph("PRIMA MOTION TECHNOLOGY — Technology that unlocks scientific insight", subtitle_style))
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 6))
     
-    # Chart
+    # Chart (ปรับขนาดความกว้าง/สูงให้พอดีหน้า A4 ไม่ดันตารางตกหน้า)
     chart_buf = create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, crop_x_min, crop_x_max)
-    story.append(RLImage(chart_buf, width=535, height=200))
-    story.append(Spacer(1, 10))
+    story.append(RLImage(chart_buf, width=535, height=170))
+    story.append(Spacer(1, 6))
     
     # Table Data
     table_data = [[
@@ -141,8 +141,8 @@ def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_ta
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4d2994')),
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e2e8f0')),
     ])
     
