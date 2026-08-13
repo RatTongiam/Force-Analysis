@@ -11,14 +11,22 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 def get_pictogram_image(filename):
-    """โหลดรูปภาพ PNG จาก GitHub Raw และบังคับแปลง Alpha Channel ให้โปร่งแสงจริง 100%"""
+    """โหลดรูปภาพ PNG และทำการตรวจจับเจาะสีขาว (Near-White Pixels) ออกเป็นพื้นหลังโปร่งแสง 100%"""
     url = f"https://raw.githubusercontent.com/RatTongiam/Force-Analysis/main/{filename}"
     try:
         resp = requests.get(url, timeout=3)
         if resp.status_code == 200:
             img = PILImage.open(io.BytesIO(resp.content)).convert("RGBA")
-            img.thumbnail((40, 60))
-            return OffsetImage(img, zoom=0.4)
+            
+            # แปลงพิกเซลสีขาว/ใกล้เคียงขาว (RGB > 220) ให้โปร่งแสง
+            data = np.array(img)
+            r, g, b, a = data[:, :, 0], data[:, :, 1], data[:, :, 2], data[:, :, 3]
+            white_bg = (r > 220) & (g > 220) & (b > 220)
+            data[white_bg, 3] = 0
+            
+            clean_img = PILImage.fromarray(data)
+            clean_img.thumbnail((40, 60))
+            return OffsetImage(clean_img, zoom=0.4)
     except Exception:
         pass
     return None
@@ -84,7 +92,7 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
     ax.text(mid_brake, max_y * 0.87, "Braking", fontsize=7, fontweight='bold', color='#ef4444', ha='center', zorder=5)
     ax.text(mid_prop, max_y * 0.94, "Propulsive", fontsize=7, fontweight='bold', color='#22c55e', ha='center', zorder=5)
 
-    # Add Pictogram Images to Matplotlib Axis with Z-Order 10 for True Transparency
+    # Add Pictogram Images to Matplotlib Axis
     pics_config = [
         ("Standing.png", max(t[0], t_start - 0.15)),
         ("UP.png", mid_unweight),
