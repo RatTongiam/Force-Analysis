@@ -261,76 +261,34 @@ if t is not None and f_total is not None and len(f_total) > 0:
     
     st.plotly_chart(fig_force, width="stretch")
 
-    # 2. PHASE BOUNDARY TIMELINE CONTROLS (SLIDER WITH +/- STEP BUTTONS)
+    # 2. PHASE BOUNDARY TIMELINE CONTROLS (CLEAN SLIDER INTERFACE)
     st.markdown("##### 🎚️ Phase Boundary Timeline Controls")
 
     c1, c2, c3, c4 = st.columns(4)
-
-    step_size = max(dt_val, 0.01) # ค่าสเต็ปสำหรับการกดปุ่ม +/-
 
     with c1:
         v1_min = t_min
         v1_max = max(v1_min + dt_val, t_braking - dt_val)
         val_1 = max(v1_min, min(st.session_state.t_start, v1_max))
-        
-        st.markdown(f"**1. Start Onset:** `{val_1:.3f} s`")
-        col_sub1, col_sub2, col_sub3 = st.columns([1, 4, 1])
-        with col_sub1:
-            if st.button("➖", key="btn_minus_1"):
-                val_1 = max(v1_min, val_1 - step_size)
-        with col_sub3:
-            if st.button("➕", key="btn_plus_1"):
-                val_1 = min(v1_max, val_1 + step_size)
-        
-        new_start = st.slider("1. Start Onset Slider", min_value=v1_min, max_value=v1_max, value=val_1, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_1")
+        new_start = st.slider("1. Start Onset (s)", min_value=v1_min, max_value=v1_max, value=val_1, step=dt_val, format="%.3f", key="slide_1")
 
     with c2:
         v2_min = max(t_min + dt_val, new_start + dt_val)
         v2_max = max(v2_min + dt_val, t_split - dt_val)
         val_2 = max(v2_min, min(st.session_state.t_braking, v2_max))
-        
-        st.markdown(f"**2. Braking:** `{val_2:.3f} s`")
-        col_sub1, col_sub2, col_sub3 = st.columns([1, 4, 1])
-        with col_sub1:
-            if st.button("➖", key="btn_minus_2"):
-                val_2 = max(v2_min, val_2 - step_size)
-        with col_sub3:
-            if st.button("➕", key="btn_plus_2"):
-                val_2 = min(v2_max, val_2 + step_size)
-
-        new_braking = st.slider("2. Braking Slider", min_value=v2_min, max_value=v2_max, value=val_2, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_2")
+        new_braking = st.slider("2. Braking (s)", min_value=v2_min, max_value=v2_max, value=val_2, step=dt_val, format="%.3f", key="slide_2")
 
     with c3:
         v3_min = max(t_min + 2 * dt_val, new_braking + dt_val)
         v3_max = max(v3_min + dt_val, t_takeoff - dt_val)
         val_3 = max(v3_min, min(st.session_state.t_split, v3_max))
-        
-        st.markdown(f"**3. Propulsive (V=0):** `{val_3:.3f} s`")
-        col_sub1, col_sub2, col_sub3 = st.columns([1, 4, 1])
-        with col_sub1:
-            if st.button("➖", key="btn_minus_3"):
-                val_3 = max(v3_min, val_3 - step_size)
-        with col_sub3:
-            if st.button("➕", key="btn_plus_3"):
-                val_3 = min(v3_max, val_3 + step_size)
-
-        new_split = st.slider("3. Propulsive Slider", min_value=v3_min, max_value=v3_max, value=val_3, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_3")
+        new_split = st.slider("3. Propulsive V=0 (s)", min_value=v3_min, max_value=v3_max, value=val_3, step=dt_val, format="%.3f", key="slide_3")
 
     with c4:
         v4_min = max(t_min + 3 * dt_val, new_split + dt_val)
         v4_max = max(v4_min + dt_val, t_max)
         val_4 = max(v4_min, min(st.session_state.t_takeoff, v4_max))
-        
-        st.markdown(f"**4. Take-off:** `{val_4:.3f} s`")
-        col_sub1, col_sub2, col_sub3 = st.columns([1, 4, 1])
-        with col_sub1:
-            if st.button("➖", key="btn_minus_4"):
-                val_4 = max(v4_min, val_4 - step_size)
-        with col_sub3:
-            if st.button("➕", key="btn_plus_4"):
-                val_4 = min(v4_max, val_4 + step_size)
-
-        new_takeoff = st.slider("4. Take-off Slider", min_value=v4_min, max_value=v4_max, value=val_4, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_4")
+        new_takeoff = st.slider("4. Take-off (s)", min_value=v4_min, max_value=v4_max, value=val_4, step=dt_val, format="%.3f", key="slide_4")
 
     if (new_start, new_braking, new_split, new_takeoff) != (t_start, t_braking, t_split, t_takeoff):
         st.session_state.t_start = new_start
