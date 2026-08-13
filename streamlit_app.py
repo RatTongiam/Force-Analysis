@@ -21,9 +21,9 @@ st.caption("PRIMA MOTION TECHNOLOGY — Technology that unlocks scientific insig
 st.sidebar.header("Data Import & Settings")
 
 data_mode = st.sidebar.radio("Select Input Mode", [
-    "MuscleLab CSV (.csv)",
-    "Dual TSV (Plate A + B)", 
-    "VALD ForceDecks (CSV/TSV)", 
+    "MuscleLab CSV",
+    "Dual TSV (QTM)", 
+    "VALD ForceDecks (CSV)", 
     "Single JSON (QTM)", 
     "Single CSV (C-Force)"
 ])
