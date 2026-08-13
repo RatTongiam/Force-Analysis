@@ -11,14 +11,12 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 def get_pictogram_image(filename):
-    """โหลดรูปภาพ PNG และทำการตรวจจับเจาะสีขาว (Near-White Pixels) ออกเป็นพื้นหลังโปร่งแสง 100%"""
+    """โหลดรูปภาพ PNG และเจาะพิกเซลสีขาว/ใกล้เคียงขาว (RGB > 220) ออกเป็นพื้นหลังโปร่งแสง 100%"""
     url = f"https://raw.githubusercontent.com/RatTongiam/Force-Analysis/main/{filename}"
     try:
         resp = requests.get(url, timeout=3)
         if resp.status_code == 200:
             img = PILImage.open(io.BytesIO(resp.content)).convert("RGBA")
-            
-            # แปลงพิกเซลสีขาว/ใกล้เคียงขาว (RGB > 220) ให้โปร่งแสง
             data = np.array(img)
             r, g, b, a = data[:, :, 0], data[:, :, 1], data[:, :, 2], data[:, :, 3]
             white_bg = (r > 220) & (g > 220) & (b > 220)
@@ -31,26 +29,26 @@ def get_pictogram_image(filename):
         pass
     return None
 
-def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff):
+def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, threshold_alert=15.0):
     pdf_buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         pdf_buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30
     )
     
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('DocTitle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=18, leading=22, textColor=colors.HexColor('#4d2994'))
-    subtitle_style = ParagraphStyle('DocSubtitle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, leading=12, textColor=colors.HexColor('#1a0f30'))
-    cell_style = ParagraphStyle('TableCell', parent=styles['Normal'], fontName='Helvetica', fontSize=7.5, leading=9.5, textColor=colors.HexColor('#1a0f30'))
+    title_style = ParagraphStyle('DocTitle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=16, leading=20, textColor=colors.HexColor('#4d2994'))
+    subtitle_style = ParagraphStyle('DocSubtitle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=8.5, leading=11, textColor=colors.HexColor('#1a0f30'))
+    cell_style = ParagraphStyle('TableCell', parent=styles['Normal'], fontName='Helvetica', fontSize=7, leading=9, textColor=colors.HexColor('#1a0f30'))
     cell_bold = ParagraphStyle('TableCellBold', parent=cell_style, fontName='Helvetica-Bold')
     
     story = [
         Paragraph("BIOMECHANICAL ANALYSIS REPORT (CMJ)", title_style),
         Paragraph("FREE JUMPANZ TEAM — PRIMA MOTION TECHNOLOGY", subtitle_style),
-        Spacer(1, 8)
+        Spacer(1, 6)
     ]
 
-    # --- PLOT WITH TRANSPARENT PICTOGRAMS & SUB-PHASES ---
-    fig_plt, ax = plt.subplots(figsize=(8, 3.2), dpi=200)
+    # --- 1. FORCE-TIME GRAPH WITH PICTOGRAMS & SUB-PHASES ---
+    fig_plt, ax = plt.subplots(figsize=(8, 2.8), dpi=200)
     ax.plot(t, sl, label='Left Limb', color='#818cf8', linewidth=0.8, zorder=3)
     ax.plot(t, sr, label='Right Limb', color='#f87171', linewidth=0.8, zorder=3)
     ax.plot(t, sf, label='Total Force', color='#4d2994', linewidth=1.2, zorder=4)
@@ -88,9 +86,9 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
     ax.set_ylim(0, max_y)
 
     # Text Annotations
-    ax.text(mid_unweight, max_y * 0.94, "Unweighting", fontsize=7, fontweight='bold', color='#ca8a04', ha='center', zorder=5)
-    ax.text(mid_brake, max_y * 0.87, "Braking", fontsize=7, fontweight='bold', color='#ef4444', ha='center', zorder=5)
-    ax.text(mid_prop, max_y * 0.94, "Propulsive", fontsize=7, fontweight='bold', color='#22c55e', ha='center', zorder=5)
+    ax.text(mid_unweight, max_y * 0.94, "Unweighting", fontsize=6.5, fontweight='bold', color='#ca8a04', ha='center', zorder=5)
+    ax.text(mid_brake, max_y * 0.87, "Braking", fontsize=6.5, fontweight='bold', color='#ef4444', ha='center', zorder=5)
+    ax.text(mid_prop, max_y * 0.94, "Propulsive", fontsize=6.5, fontweight='bold', color='#22c55e', ha='center', zorder=5)
 
     # Add Pictogram Images to Matplotlib Axis
     pics_config = [
@@ -114,10 +112,10 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
             )
             ax.add_artist(ab)
 
-    ax.set_title("FORCE-TIME ANALYSIS & SUB-PHASES", fontsize=9, fontweight='bold', color='#1a0f30')
-    ax.set_xlabel("Time (s)", fontsize=8)
-    ax.set_ylabel("Force (N)", fontsize=8)
-    ax.legend(loc='upper right', fontsize=7)
+    ax.set_title("FORCE-TIME ANALYSIS & SUB-PHASES", fontsize=8.5, fontweight='bold', color='#1a0f30')
+    ax.set_xlabel("Time (s)", fontsize=7.5)
+    ax.set_ylabel("Force (N)", fontsize=7.5)
+    ax.legend(loc='upper right', fontsize=6.5)
     ax.grid(True, linestyle=':', alpha=0.5)
 
     plt.tight_layout()
@@ -126,9 +124,10 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
     plt.close(fig_plt)
     img_buffer.seek(0)
 
-    story.append(Image(img_buffer, width=520, height=208))
-    story.append(Spacer(1, 6))
+    story.append(Image(img_buffer, width=520, height=182))
+    story.append(Spacer(1, 4))
     
+    # --- 2. BIOMECHANICAL METRICS TABLE ---
     table_data = [[
         Paragraph("<b>Biomechanical Metric</b>", cell_bold), 
         Paragraph("<b>Left</b>", cell_bold), 
@@ -160,8 +159,8 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
             
     t_styles_list = [
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f8f6fb')),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 1.2),
-        ('TOPPADDING', (0, 0), (-1, -1), 1.2),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 1.0),
+        ('TOPPADDING', (0, 0), (-1, -1), 1.0),
         ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e5e7eb')),
     ]
@@ -173,7 +172,51 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
     doc_table = Table(table_data, colWidths=[190, 75, 75, 90, 90])
     doc_table.setStyle(TableStyle(t_styles_list))
     story.append(doc_table)
+    story.append(Spacer(1, 6))
+
+    # --- 3. L/R ASYMMETRY % GRAPH BELOW THE TABLE ---
+    deficits = np.where(sf >= 50, ((sl - sr) / np.maximum(sl, sr)) * 100, 0)
     
+    fig_asym, ax2 = plt.subplots(figsize=(8, 1.8), dpi=200)
+    
+    # Phase Shading Areas
+    ax2.axvspan(t_start, t_braking, color='#fef08a', alpha=0.35, zorder=1)
+    ax2.axvspan(t_braking, t_split, color='#fca5a5', alpha=0.35, zorder=1)
+    ax2.axvspan(t_split, t_takeoff, color='#bbf7d0', alpha=0.35, zorder=1)
+
+    # Vertical Dotted Boundary Lines
+    ax2.axvline(t_start, color='#ca8a04', linestyle='--', linewidth=0.8, zorder=2)
+    ax2.axvline(t_braking, color='#ef4444', linestyle='--', linewidth=0.8, zorder=2)
+    ax2.axvline(t_split, color='#22c55e', linestyle='--', linewidth=0.8, zorder=2)
+    ax2.axvline(t_takeoff, color='#dc2626', linestyle='--', linewidth=0.8, zorder=2)
+
+    # Zero Line & Threshold Alert Band
+    ax2.axhline(0, color='#6b7280', linewidth=0.8, zorder=3)
+    ax2.axhspan(-threshold_alert, threshold_alert, color='#bbf7d0', alpha=0.25, zorder=2)
+
+    # Asymmetry Line & Area Fill
+    ax2.plot(t, deficits, color='#4d2994', linewidth=1.1, label='Asymmetry %', zorder=4)
+    ax2.fill_between(t, deficits, 0, color='#4d2994', alpha=0.15, zorder=3)
+
+    # Dominance Labels
+    ax2.text(t[0] + 0.02, 38, "← Left Dominant (L > R)", fontsize=6.5, fontweight='bold', color='#818cf8', va='center', zorder=5)
+    ax2.text(t[0] + 0.02, -38, "← Right Dominant (R > L)", fontsize=6.5, fontweight='bold', color='#f87171', va='center', zorder=5)
+
+    ax2.set_ylim(-55, 55)
+    ax2.set_xlim(t[0], t[-1])
+    ax2.set_title("L/R ASYMMETRY % (Threshold Alert & Limb Dominance)", fontsize=8.5, fontweight='bold', color='#1a0f30')
+    ax2.set_xlabel("Time (s)", fontsize=7.5)
+    ax2.set_ylabel("Deficit %", fontsize=7.5)
+    ax2.grid(True, linestyle=':', alpha=0.5)
+
+    plt.tight_layout()
+    asym_buffer = io.BytesIO()
+    plt.savefig(asym_buffer, format='png', dpi=200)
+    plt.close(fig_asym)
+    asym_buffer.seek(0)
+
+    story.append(Image(asym_buffer, width=520, height=117))
+
     doc.build(story)
     pdf_buffer.seek(0)
     return pdf_buffer
