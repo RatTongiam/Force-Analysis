@@ -147,32 +147,25 @@ if t is not None and f_total is not None and len(f_total) > 0:
             dict(type="line", x0=st.session_state.t_takeoff, x1=st.session_state.t_takeoff, y0=0, y1=1, yref="paper", line=dict(color="#dc2626", width=2, dash="dash")),
         ]
     )
-    
-    config = {'editable': True, 'edits': {'shapePosition': True}}
-    
-    col_chart, _ = st.columns([1, 0.001])
-    with col_chart:
-        event = st.plotly_chart(fig_force, width="stretch", config=config, key="force_chart")
-
-    if event and "edits" in event and "shape" in event["edits"]:
-        shape_idx = event["edits"]["shape"].get("index")
-        new_x = event["edits"]["shape"].get("x0")
-        if new_x is not None:
-            min_t, max_t = float(t[0]), float(t[-1])
-            new_x = max(min_t, min(max_t, new_x))
-            
-            if shape_idx == 0:
-                st.session_state.t_start = min(new_x, st.session_state.t_braking)
-            elif shape_idx == 1:
-                st.session_state.t_braking = max(st.session_state.t_start, min(new_x, st.session_state.t_split))
-            elif shape_idx == 2:
-                st.session_state.t_split = max(st.session_state.t_braking, min(new_x, st.session_state.t_takeoff))
-            elif shape_idx == 3:
-                st.session_state.t_takeoff = max(st.session_state.t_split, new_x)
-            st.rerun()
-
-    t_start = st.session_state.t_start
-    t_braking = st.session_state.t_braking
+   # ดักจับ Event จาก Plotly โดยตรวจสอบว่าเป็น dict ก่อนเสมอ
+    if isinstance(event, dict) and "edits" in event and isinstance(event["edits"], dict) and "shape" in event["edits"]:
+        shape_info = event["edits"]["shape"]
+        if isinstance(shape_info, dict):
+            shape_idx = shape_info.get("index")
+            new_x = shape_info.get("x0")
+            if new_x is not None:
+                min_t, max_t = float(t[0]), float(t[-1])
+                new_x = max(min_t, min(max_t, new_x))
+                
+                if shape_idx == 0:
+                    st.session_state.t_start = min(new_x, st.session_state.t_braking)
+                elif shape_idx == 1:
+                    st.session_state.t_braking = max(st.session_state.t_start, min(new_x, st.session_state.t_split))
+                elif shape_idx == 2:
+                    st.session_state.t_split = max(st.session_state.t_braking, min(new_x, st.session_state.t_takeoff))
+                elif shape_idx == 3:
+                    st.session_state.t_takeoff = max(st.session_state.t_split, new_x)
+                st.rerun()
     t_split = st.session_state.t_split
     t_takeoff = st.session_state.t_takeoff
 
