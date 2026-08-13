@@ -5,3 +5,5 @@ plotly
 reportlab
 kaleido==0.2.1
 matplotlib
+scipy
+fpdf2
