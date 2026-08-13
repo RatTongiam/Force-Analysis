@@ -4,9 +4,6 @@ from scipy.signal import butter, filtfilt
 from scipy.ndimage import label
 
 def butter_lowpass_filter(data, cutoff=10.0, fs=2000.0, order=4):
-    """
-    Zero-phase 4th-order Low-pass Butterworth Filter (filtfilt)
-    """
     if len(data) <= order * 3:
         return np.array(data, dtype=float)
     
@@ -23,26 +20,15 @@ def butter_lowpass_filter(data, cutoff=10.0, fs=2000.0, order=4):
     return y
 
 def apply_signal_filter(data, filter_type="Butterworth LPF", cutoff=10.0, fs=1000.0, window_size=15):
-    """
-    Pipeline ประมวลผลสัญญาณแรง (Signal Processing Pipeline):
-    1. Zero Calibration Shift: ปรับ Baseline ช่วงลอยตัวให้ลงมาแตะ 0 N
-    2. Filtering: กรอง Noise ความถี่สูง (Butterworth / Moving Average)
-    3. Zero-Clipping: ลบเฉพาะ Undershoot ค่าติดลบที่เกิดจากฟิลเตอร์
-    """
     data_arr = np.array(data, dtype=float)
     if len(data_arr) == 0:
         return data_arr
 
-    # --- STEP 1: ZERO CALIBRATION SHIFT (TARE BASELINE) ---
-    # คำนวณหา Offset จากช่วงแรงต่ำสุด (Flight Phase/Unloaded Area)
     sorted_forces = np.sort(data_arr)
-    min_samples = max(10, int(0.05 * len(data_arr))) # ดึงช่วง 5% ที่แรงต่ำสุด
+    min_samples = max(10, int(0.05 * len(data_arr)))
     baseline_offset = np.mean(sorted_forces[:min_samples])
-    
-    # ลบ Offset ออกเพื่อให้ช่วงลอยตัวเป็น 0 N แท้จริง
     calibrated_data = data_arr - baseline_offset
 
-    # --- STEP 2: SIGNAL FILTERING ---
     if filter_type == "Butterworth LPF":
         filtered = butter_lowpass_filter(calibrated_data, cutoff=cutoff, fs=fs, order=4)
     elif filter_type == "Moving Average":
@@ -50,13 +36,10 @@ def apply_signal_filter(data, filter_type="Butterworth LPF", cutoff=10.0, fs=100
             filtered = calibrated_data
         else:
             filtered = pd.Series(calibrated_data).rolling(window=window_size, center=True, min_periods=1).mean().values
-    else:  # Raw Data (None)
+    else:
         filtered = calibrated_data
 
-    # --- STEP 3: ZERO-CLIPPING ---
-    # ลบค่าติดลบทั้งหมดที่เกิดจาก Filter Undershoot ออกตามหลักกายภาพ (Fz >= 0 N)
     cleaned_signal = np.maximum(0.0, filtered)
-
     return cleaned_signal
 
 def moving_average(arr, window):
@@ -83,27 +66,17 @@ def calc_deficit_str(val_l, val_r):
         return "-"
 
 def detect_phases_sequential(t, sf_raw, dt, quiet_samples, filter_type="Butterworth LPF", cutoff=10.0):
-    """
-    Peak-Centric Phase Detection Algorithm
-    """
     n_samples = len(sf_raw)
     fs = 1.0 / dt
     g = 9.80665
 
-    # Apply Signal Pipeline (Zero Shift + Filter + Zero Clipping)
     sf = apply_signal_filter(sf_raw, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
     
-    # Body Weight (BW) Detection
     win_bw = min(int(1.0 * fs), n_samples)
     bw = np.mean(sf[:win_bw])
     force_sd = np.std(sf[:win_bw])
     mass = bw / g if bw > 0 else 70.0
 
-    # Global Peak Force
-    search_start = min(int(0.5 * fs), n_samples - 1)
-    global_peak_idx = search_start + np.argmax(sf[search_start:])
-
-    # Flight Phase Detection
     flight_threshold = 25.0
     flight_mask = sf < flight_threshold
     labeled, num_features = label(flight_mask)
@@ -115,20 +88,19 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples, filter_type="Butterwo
         valid_blocks = []
         for i in range(1, num_features + 1):
             idxs = np.where(labeled == i)[0]
-            if len(idxs) > int(0.05 * fs):
-                dist_to_peak = abs(idxs[0] - global_peak_idx)
-                valid_blocks.append((i, dist_to_peak, idxs[0], idxs[-1]))
+            if len(idxs) > int(0.10 * fs) and idxs[0] > int(0.5 * fs):
+                valid_blocks.append((i, len(idxs), idxs[0], idxs[-1]))
         
         if valid_blocks:
-            best_block = min(valid_blocks, key=lambda x: x[1])
+            best_block = max(valid_blocks, key=lambda x: x[1])
             tIdx_auto = best_block[2]
             lIdx_auto = best_block[3]
 
     if tIdx_auto is None:
-        tIdx_auto = max(0, global_peak_idx - int(0.2 * fs))
+        global_peak_idx = int(0.5 * fs) + np.argmax(sf[int(0.5 * fs):])
+        tIdx_auto = max(int(0.5 * fs), global_peak_idx - int(0.2 * fs))
         lIdx_auto = min(n_samples - 1, tIdx_auto + int(0.4 * fs))
 
-    # Propulsive & Braking Search
     prop_search_start = max(0, tIdx_auto - int(1.5 * fs))
     if tIdx_auto > prop_search_start:
         peak_prop_idx = prop_search_start + np.argmax(sf[prop_search_start:tIdx_auto])
@@ -140,7 +112,6 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples, filter_type="Butterwo
     else:
         bIdx_auto = max(0, peak_prop_idx - int(0.2 * fs))
 
-    # Unweighting Onset
     threshold_bw = max(bw * 0.98, bw - 3 * force_sd)
     back_search_window = sf[:bIdx_auto]
     bw_crossings = np.where(back_search_window >= threshold_bw)[0]
@@ -150,7 +121,6 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples, filter_type="Butterwo
     else:
         sIdx_auto = max(0, bIdx_auto - int(0.4 * fs))
 
-    # Propulsive Onset (V = 0 Crossing)
     vel_temp = np.cumsum((sf[sIdx_auto:tIdx_auto + 1] - bw) / mass) * dt
     b_rel = max(0, bIdx_auto - sIdx_auto)
     zero_crossings = np.where(vel_temp[b_rel:] >= 0)[0]
@@ -159,7 +129,6 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples, filter_type="Butterwo
     else:
         zIdx_auto = bIdx_auto
 
-    # Bounding & Order Enforcement
     tIdx_auto = min(tIdx_auto, n_samples - 1)
     lIdx_auto = min(lIdx_auto, n_samples - 1)
     zIdx_auto = min(zIdx_auto, tIdx_auto)
