@@ -165,7 +165,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     t_split = st.session_state.t_split
     t_takeoff = st.session_state.t_takeoff
 
-    # คำนวณ t_landing สำหรับการมาร์กเฟสและ Crop
+    # คำนวณ t_landing สำหรับการมาร์กเฟส
     t_curr_landing = min(t_max, t_takeoff + 0.5) 
     airborne_frames = np.where((np.arange(n_samples) >= int(round((t_takeoff - t_min)/dt))) & (sf < 25.0))[0]
     if len(airborne_frames) > 0:
@@ -173,10 +173,10 @@ if t is not None and f_total is not None and len(f_total) > 0:
         if len(non_air) > 0:
             t_curr_landing = float(t[non_air[0]])
 
-    # กำหนดช่วงเวลาแกน X ตามสถานะ Confirmation
+    # กำหนดช่วงเวลา Crop: ก่อนเฟสแรก 1s และ หลัง Take-off 2s
     if st.session_state.get("is_confirmed", False):
-        crop_x_min = max(t_min, t_start - 0.8)
-        crop_x_max = min(t_max, t_curr_landing + 0.8)
+        crop_x_min = max(t_min, t_start - 1.0)
+        crop_x_max = min(t_max, t_takeoff + 2.0)
     else:
         crop_x_min = t_min
         crop_x_max = t_max
@@ -283,7 +283,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
         v4_max = t_max
         v4_val = max(v4_min, min(t_takeoff, v4_max))
         v4_num = st.number_input("4. Take-off (s)", min_value=v4_min, max_value=v4_max, value=v4_val, step=float(dt), format="%.3f", key="num_4")
-        v4_slide = st.slider("4. Take-off Slider", min_value=v4_min, max_value=v4_max, value=v4_val, step=float(dt), format="%.3f", label_visibility="collapsed", key="slide_4")
+        v4_slide = st.slider("4. Take-off Slider", min_value=v4_min, max_value=v4_max, value=v4_num, step=float(dt), format="%.3f", label_visibility="collapsed", key="slide_4")
         new_takeoff = v4_slide
 
     if (new_start, new_braking, new_split, new_takeoff) != (t_start, t_braking, t_split, t_takeoff):
@@ -293,7 +293,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
         st.session_state.t_takeoff = new_takeoff
         st.rerun()
 
-    # ปุ่ม Confirm / Edit Crop Mode
     col_btn1, col_btn2 = st.columns([1, 4])
     with col_btn1:
         if not st.session_state.get("is_confirmed", False):
