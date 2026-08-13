@@ -21,11 +21,11 @@ st.caption("PRIMA MOTION TECHNOLOGY — Technology that unlocks scientific insig
 st.sidebar.header("Data Import & Settings")
 
 data_mode = st.sidebar.radio("Select Input Mode", [
-    "MuscleLab CSV (CSV)",
-    "Dual TSV (QTM)", 
-    "VALD ForceDecks (CSV)", 
+    "MuscleLab CSV (.csv)",
+    "Dual TSV (Plate A + B)", 
+    "VALD ForceDecks (CSV/TSV)", 
     "Single JSON (QTM)", 
-    "Single CSV (C-Force Performance)"
+    "Single CSV (C-Force)"
 ])
 
 filter_size = st.sidebar.selectbox("Smoothing Filter", [1, 7, 15, 31], index=2)
@@ -33,7 +33,7 @@ threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=
 
 dt, t, f_left, f_right, f_total = None, None, None, None, None
 
-if data_mode == "MuscleLab CSV (CSV)":
+if data_mode == "MuscleLab CSV (.csv)":
     file_ml = st.sidebar.file_uploader("Upload MuscleLab CSV File (.csv)", type=["csv"])
     if file_ml:
         try:
@@ -41,7 +41,7 @@ if data_mode == "MuscleLab CSV (CSV)":
         except Exception as e:
             st.error(f"Error parsing MuscleLab CSV file: {e}")
 
-elif data_mode == "Dual TSV (QTM)":
+elif data_mode == "Dual TSV (Plate A + B)":
     file_a = st.sidebar.file_uploader("Upload Plate File A (.tsv)", type=["tsv"])
     side_a = st.sidebar.selectbox("Assign Side File A", ["left", "right"], index=0)
     file_b = st.sidebar.file_uploader("Upload Plate File B (.tsv)", type=["tsv"])
@@ -58,7 +58,7 @@ elif data_mode == "Dual TSV (QTM)":
         f_right = fz_b if side_a == "left" else fz_a
         f_total = f_left + f_right
 
-elif data_mode == "VALD ForceDecks (CSV)":
+elif data_mode == "VALD ForceDecks (CSV/TSV)":
     file_vald = st.sidebar.file_uploader("Upload VALD ForceDecks File (.csv / .tsv)", type=["csv", "tsv"])
     if file_vald:
         try:
@@ -102,7 +102,7 @@ elif data_mode == "Single JSON (QTM)":
         except Exception as e:
             st.error(f"Error parsing QTM JSON file: {e}")
 
-elif data_mode == "Single CSV (C-Force Performance)":
+elif data_mode == "Single CSV (C-Force)":
     file_csv = st.sidebar.file_uploader("Upload Single CSV File (.csv)", type=["csv"])
     if file_csv:
         try:
@@ -120,47 +120,66 @@ if t is not None and f_total is not None and len(f_total) > 0:
 
     sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto = detect_phases_sequential(t, sf, dt, quiet_samples)
 
-    if "t_start" not in st.session_state or st.sidebar.button("🔄 Reset Phases"):
-        st.session_state.t_start = float(t[sIdx_auto])
-        st.session_state.t_braking = float(t[bIdx_auto])
-        st.session_state.t_split = float(t[zIdx_auto])
-        st.session_state.t_takeoff = float(t[tIdx_auto])
+    # Initializing Session State for Slider
+    if "t_phases" not in st.session_state or st.sidebar.button("🔄 Reset Phases"):
+        st.session_state.t_phases = (
+            float(t[sIdx_auto]),
+            float(t[bIdx_auto]),
+            float(t[zIdx_auto]),
+            float(t[tIdx_auto])
+        )
 
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Phase Control Sliders")
-    
-    t_start = st.sidebar.slider("Start (Unweighting Onset)", float(t[0]), float(t[-1]), float(st.session_state.t_start), step=0.005)
-    t_braking = st.sidebar.slider("Braking Onset (Min Force)", float(t_start), float(t[-1]), float(max(st.session_state.t_braking, t_start)), step=0.005)
-    t_split = st.sidebar.slider("Propulsive Onset (V=0)", float(t_braking), float(t[-1]), float(max(st.session_state.t_split, t_braking)), step=0.005)
-    t_takeoff = st.sidebar.slider("Take-off", float(t_split), float(t[-1]), float(max(st.session_state.t_takeoff, t_split)), step=0.005)
+    t_min = float(t[0])
+    t_max = float(t[-1])
 
-    st.session_state.t_start = t_start
-    st.session_state.t_braking = t_braking
-    st.session_state.t_split = t_split
-    st.session_state.t_takeoff = t_takeoff
+    # 1. DRAW FORCE-TIME GRAPH FIRST
+    t_start, t_braking, t_split, t_takeoff = st.session_state.t_phases
 
     fig_force = go.Figure()
     fig_force.add_trace(go.Scatter(x=t, y=sl, name="Left Limb", line=dict(color='#818cf8', width=0.8)))
     fig_force.add_trace(go.Scatter(x=t, y=sr, name="Right Limb", line=dict(color='#f87171', width=0.8)))
     fig_force.add_trace(go.Scatter(x=t, y=sf, name="Total Force", line=dict(color='#4d2994', width=1.2)))
 
-    fig_force.add_vrect(x0=t_start, x1=t_braking, fillcolor="yellow", opacity=0.08, line_width=0)
-    fig_force.add_vrect(x0=t_braking, x1=t_split, fillcolor="red", opacity=0.08, line_width=0)
-    fig_force.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="green", opacity=0.08, line_width=0)
+    # Phase Shading Areas (Unweighting, Braking, Propulsive)
+    fig_force.add_vrect(x0=t_start, x1=t_braking, fillcolor="rgba(234, 179, 8, 0.12)", line_width=0, annotation_text="Unweighting", annotation_position="top left")
+    fig_force.add_vrect(x0=t_braking, x1=t_split, fillcolor="rgba(239, 68, 68, 0.12)", line_width=0, annotation_text="Braking", annotation_position="top left")
+    fig_force.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="rgba(34, 197, 94, 0.12)", line_width=0, annotation_text="Propulsive", annotation_position="top left")
 
-    fig_force.add_vline(x=t_start, line_dash="dot", line_color="#ca8a04", line_width=1.2)
-    fig_force.add_vline(x=t_braking, line_dash="dot", line_color="#ef4444", line_width=1.2)
-    fig_force.add_vline(x=t_split, line_dash="dot", line_color="#22c55e", line_width=1.2)
-    fig_force.add_vline(x=t_takeoff, line_dash="dot", line_color="#dc2626", line_width=1.2)
+    # Dotted Vertical Lines
+    fig_force.add_vline(x=t_start, line_width=1.5, line_dash="dash", line_color="#ca8a04")
+    fig_force.add_vline(x=t_braking, line_width=1.5, line_dash="dash", line_color="#ef4444")
+    fig_force.add_vline(x=t_split, line_width=1.5, line_dash="dash", line_color="#22c55e")
+    fig_force.add_vline(x=t_takeoff, line_width=1.5, line_dash="dash", line_color="#dc2626")
 
     fig_force.update_layout(
         title="FORCE-TIME ANALYSIS & SUB-PHASES",
         xaxis_title="Time (s)",
         yaxis_title="Force (N)",
-        height=450
+        height=420,
+        margin=dict(l=40, r=40, t=50, b=20)
     )
+    fig_force.update_xaxes(range=[t_min, t_max])
     
-    st.plotly_chart(fig_force, width="stretch", key="force_chart")
+    st.plotly_chart(fig_force, width="stretch")
+
+    # 2. SLIDING BAR BELOW THE GRAPH (EXACT TIME RANGE MATCHING GRAPH X-AXIS)
+    st.markdown("##### 🎚️ Phase Adjustment Slider (Start → Min Force → V=0 → Take-off)")
+    
+    new_t_phases = st.slider(
+        label="Adjust Phase Boundaries (Time in seconds):",
+        min_value=t_min,
+        max_value=t_max,
+        value=st.session_state.t_phases,
+        step=float(dt),
+        format="%.3f s"
+    )
+
+    if new_t_phases != st.session_state.t_phases:
+        st.session_state.t_phases = new_t_phases
+        st.rerun()
+
+    # Index Calculations
+    t_start, t_braking, t_split, t_takeoff = st.session_state.t_phases
 
     sIdx = min(max(0, int(round((t_start - t[0]) / dt))), n_samples - 1)
     bIdx = min(max(0, int(round((t_braking - t[0]) / dt))), n_samples - 1)
@@ -191,8 +210,8 @@ if t is not None and f_total is not None and len(f_total) > 0:
     fig_deficit.add_trace(go.Scatter(x=t, y=deficits, name="Asymmetry", fill='tozeroy', fillcolor='rgba(77, 41, 148, 0.15)', line=dict(color='#4d2994', width=1.5)))
     
     fig_deficit.add_hrect(y0=-threshold_alert, y1=threshold_alert, fillcolor="rgba(34, 197, 94, 0.15)", line_width=0)
-    fig_deficit.update_layout(title="L/R ASYMMETRY % (Threshold Alert)", xaxis_title="Time (s)", yaxis_title="Deficit %", yaxis_range=[-55, 55], height=260)
-    fig_deficit.update_xaxes(range=[t[0], t[-1]])
+    fig_deficit.update_layout(title="L/R ASYMMETRY % (Threshold Alert)", xaxis_title="Time (s)", yaxis_title="Deficit %", yaxis_range=[-55, 55], height=240)
+    fig_deficit.update_xaxes(range=[t_min, t_max])
     st.plotly_chart(fig_deficit, width="stretch")
 
     st.markdown("### Standard Biomechanical Analysis Report (Anicic et al., 2023)")
