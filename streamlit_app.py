@@ -141,14 +141,15 @@ if t is not None and f_total is not None and len(f_total) > 0:
         t, f_total, dt, quiet_samples, filter_type=filter_type, cutoff=cutoff_freq
     )
 
+    t_min = float(t[0])
+    t_max = float(t[-1])
+
     if "t_start" not in st.session_state or st.sidebar.button("🔄 Reset Phases"):
         st.session_state.t_start = float(t[sIdx_auto])
         st.session_state.t_braking = float(t[bIdx_auto])
         st.session_state.t_split = float(t[zIdx_auto])
         st.session_state.t_takeoff = float(t[tIdx_auto])
-
-    t_min = float(t[0])
-    t_max = float(t[-1])
+        st.session_state.x_range = [t_min, t_max]
 
     t_start = st.session_state.t_start
     t_braking = st.session_state.t_braking
@@ -223,14 +224,18 @@ if t is not None and f_total is not None and len(f_total) > 0:
             )
         )
 
+    # ควบคุมช่วง Zoom บนแกน X ตามค่าใน session_state
+    curr_x_range = st.session_state.get("x_range", [t_min, t_max])
+
     fig_force.update_layout(
         title="FORCE-TIME ANALYSIS & SUB-PHASES",
         xaxis_title="Time (s)",
         yaxis_title="Force (N)",
         height=480,
-        margin=dict(l=40, r=40, t=50, b=20)
+        margin=dict(l=40, r=40, t=50, b=20),
+        uirevision="constant"  # ล็อก Zoom State บน Plotly
     )
-    fig_force.update_xaxes(range=[t_min, t_max])
+    fig_force.update_xaxes(range=curr_x_range)
     
     st.plotly_chart(fig_force, width="stretch")
 
@@ -264,6 +269,9 @@ if t is not None and f_total is not None and len(f_total) > 0:
         st.session_state.t_braking = new_braking
         st.session_state.t_split = new_split
         st.session_state.t_takeoff = new_takeoff
+        
+        # รักษาระยะซูมเดิมไว้รอบๆ จุดเฟสที่กำลังปรับ
+        st.session_state.x_range = [max(t_min, new_start - 0.3), min(t_max, new_takeoff + 0.3)]
         st.rerun()
 
     # Index Calculations
@@ -288,7 +296,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
         mime="application/pdf"
     )
 
-    # 3. L/R ASYMMETRY % GRAPH WITH LEFT / RIGHT DOMINANCE LABELS
+    # 3. L/R ASYMMETRY % GRAPH
     deficits = np.where(sf >= 50, ((sl - sr) / np.maximum(sl, sr)) * 100, 0)
     fig_deficit = go.Figure()
 
@@ -340,9 +348,10 @@ if t is not None and f_total is not None and len(f_total) > 0:
         yaxis_title="Deficit %", 
         yaxis_range=[-55, 55], 
         height=360,
-        margin=dict(l=40, r=40, t=50, b=20)
+        margin=dict(l=40, r=40, t=50, b=20),
+        uirevision="constant"
     )
-    fig_deficit.update_xaxes(range=[t_min, t_max])
+    fig_deficit.update_xaxes(range=curr_x_range)
     st.plotly_chart(fig_deficit, width="stretch")
 
     st.markdown("### Standard Biomechanical Analysis Report (Anicic et al., 2023)")
