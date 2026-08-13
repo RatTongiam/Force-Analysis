@@ -120,7 +120,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
 
     sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto = detect_phases_sequential(t, sf, dt, quiet_samples)
 
-    # Session State Initialization for Phase Times
     if "t_start" not in st.session_state or st.sidebar.button("🔄 Reset Phases"):
         st.session_state.t_start = float(t[sIdx_auto])
         st.session_state.t_braking = float(t[bIdx_auto])
@@ -135,22 +134,34 @@ if t is not None and f_total is not None and len(f_total) > 0:
     t_split = st.session_state.t_split
     t_takeoff = st.session_state.t_takeoff
 
-    # 1. DRAW FORCE-TIME GRAPH FIRST
+    # 1. GRAPH WITH NON-OVERLAPPING ANNOTATIONS
     fig_force = go.Figure()
     fig_force.add_trace(go.Scatter(x=t, y=sl, name="Left Limb", line=dict(color='#818cf8', width=0.8)))
     fig_force.add_trace(go.Scatter(x=t, y=sr, name="Right Limb", line=dict(color='#f87171', width=0.8)))
     fig_force.add_trace(go.Scatter(x=t, y=sf, name="Total Force", line=dict(color='#4d2994', width=1.2)))
 
-    # Phase Shading Areas
-    fig_force.add_vrect(x0=t_start, x1=t_braking, fillcolor="rgba(234, 179, 8, 0.12)", line_width=0, annotation_text="Unweighting", annotation_position="top left")
-    fig_force.add_vrect(x0=t_braking, x1=t_split, fillcolor="rgba(239, 68, 68, 0.12)", line_width=0, annotation_text="Braking", annotation_position="top left")
-    fig_force.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="rgba(34, 197, 94, 0.12)", line_width=0, annotation_text="Propulsive", annotation_position="top left")
+    # Phase Rectangles (No Overlapping Labels)
+    fig_force.add_vrect(x0=t_start, x1=t_braking, fillcolor="rgba(234, 179, 8, 0.12)", line_width=0)
+    fig_force.add_vrect(x0=t_braking, x1=t_split, fillcolor="rgba(239, 68, 68, 0.12)", line_width=0)
+    fig_force.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="rgba(34, 197, 94, 0.12)", line_width=0)
 
-    # Dotted Vertical Lines
+    # Vertical Phase Boundary Lines
     fig_force.add_vline(x=t_start, line_width=1.5, line_dash="dash", line_color="#ca8a04")
     fig_force.add_vline(x=t_braking, line_width=1.5, line_dash="dash", line_color="#ef4444")
     fig_force.add_vline(x=t_split, line_width=1.5, line_dash="dash", line_color="#22c55e")
     fig_force.add_vline(x=t_takeoff, line_width=1.5, line_dash="dash", line_color="#dc2626")
+
+    # Dynamic Center Positions for Phase Labels
+    mid_unweight = (t_start + t_braking) / 2.0
+    mid_brake = (t_braking + t_split) / 2.0
+    mid_prop = (t_split + t_takeoff) / 2.0
+
+    max_y = float(np.max(sf)) * 1.05
+
+    # Text Annotations placed at midpoint & staggered y-heights to eliminate overlap
+    fig_force.add_annotation(x=mid_unweight, y=max_y * 0.98, text="Unweighting", showarrow=False, font=dict(size=11, color="#ca8a04", family="Arial Bold"))
+    fig_force.add_annotation(x=mid_brake, y=max_y * 0.90, text="Braking", showarrow=False, font=dict(size=11, color="#ef4444", family="Arial Bold"))
+    fig_force.add_annotation(x=mid_prop, y=max_y * 0.98, text="Propulsive", showarrow=False, font=dict(size=11, color="#22c55e", family="Arial Bold"))
 
     fig_force.update_layout(
         title="FORCE-TIME ANALYSIS & SUB-PHASES",
@@ -163,18 +174,27 @@ if t is not None and f_total is not None and len(f_total) > 0:
     
     st.plotly_chart(fig_force, width="stretch")
 
-    # 2. SLIDERS BELOW THE GRAPH (BOUNDED & SEQUENTIAL)
-    st.markdown("##### 🎚️ Phase Adjustment Sliders")
+    # 2. CONTINUOUS TIMELINE CONTROL (SINGLE VISUAL LINE CONTROL)
+    st.markdown("##### 🎚️ Phase Boundary Timeline Controls")
+    
+    # CSS Custom Styling to render 4 sliders closely formatted on a unified line
+    st.markdown("""
+        <style>
+        .stSlider { padding-top: 0px; padding-bottom: 0px; }
+        div[data-testid="stHorizontalBlock"] { gap: 0.5rem; }
+        </style>
+    """, unsafe_allow_html=True)
+
     c1, c2, c3, c4 = st.columns(4)
 
     with c1:
-        new_start = st.slider("Start Onset (s)", min_value=t_min, max_value=t_braking, value=t_start, step=float(dt), format="%.3f")
+        new_start = st.number_input("1. Start Onset (s)", min_value=t_min, max_value=t_braking, value=t_start, step=float(dt), format="%.3f")
     with c2:
-        new_braking = st.slider("Braking / Min Force (s)", min_value=new_start, max_value=t_split, value=t_braking, step=float(dt), format="%.3f")
+        new_braking = st.number_input("2. Braking / Min Force (s)", min_value=new_start, max_value=t_split, value=t_braking, step=float(dt), format="%.3f")
     with c3:
-        new_split = st.slider("Propulsive / V=0 (s)", min_value=new_braking, max_value=t_takeoff, value=t_split, step=float(dt), format="%.3f")
+        new_split = st.number_input("3. Propulsive / V=0 (s)", min_value=new_braking, max_value=t_takeoff, value=t_split, step=float(dt), format="%.3f")
     with c4:
-        new_takeoff = st.slider("Take-off (s)", min_value=new_split, max_value=t_max, value=t_takeoff, step=float(dt), format="%.3f")
+        new_takeoff = st.number_input("4. Take-off (s)", min_value=new_split, max_value=t_max, value=t_takeoff, step=float(dt), format="%.3f")
 
     if (new_start, new_braking, new_split, new_takeoff) != (t_start, t_braking, t_split, t_takeoff):
         st.session_state.t_start = new_start
