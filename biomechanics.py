@@ -4,13 +4,38 @@ from scipy.signal import butter, filtfilt
 from scipy.ndimage import label
 
 def butter_lowpass_filter(data, cutoff=10.0, fs=2000.0, order=4):
+    """
+    Zero-phase 4th-order Low-pass Butterworth Filter (filtfilt)
+    ช่วยขจัด High-frequency noise โดยไม่เกิด Phase Shift ค่า Peak และเวลาไม่เคลื่อน
+    """
+    if len(data) <= order * 3:
+        return np.array(data, dtype=float)
+    
     nyq = 0.5 * fs
     normal_cutoff = cutoff / nyq
     if normal_cutoff >= 1.0:
         normal_cutoff = 0.99
+    elif normal_cutoff <= 0.0:
+        normal_cutoff = 0.01
+
     b, a = butter(order, normal_cutoff, btype='low', analog=False)
-    y = filtfilt(b, a, data)
+    # ใช้ padlen เพื่อลดสัญญาณกระตุกช่วงขอบ (Edge Transients)
+    pad_l = min(150, len(data) - 1)
+    y = filtfilt(b, a, data, padlen=pad_l)
     return y
+
+def apply_signal_filter(data, filter_type="Butterworth LPF", cutoff=10.0, fs=1000.0, window_size=15):
+    """
+    ฟังก์ชันสวิตช์เลือก Filter ตามค่าที่ส่งมาจาก Streamlit UI
+    """
+    if filter_type == "Butterworth LPF":
+        return butter_lowpass_filter(data, cutoff=cutoff, fs=fs, order=4)
+    elif filter_type == "Moving Average":
+        if window_size <= 1:
+            return np.array(data, dtype=float)
+        return pd.Series(data).rolling(window=window_size, center=True, min_periods=1).mean().values
+    else:  # Raw Data (None)
+        return np.array(data, dtype=float)
 
 def moving_average(arr, window):
     if window <= 1:
@@ -35,12 +60,12 @@ def calc_deficit_str(val_l, val_r):
     except (ValueError, TypeError):
         return "-"
 
-def detect_phases_sequential(t, sf_raw, dt, quiet_samples):
+def detect_phases_sequential(t, sf_raw, dt, quiet_samples, filter_type="Butterworth LPF", cutoff=10.0):
     n_samples = len(sf_raw)
     fs = 1.0 / dt
     g = 9.80665
 
-    sf = butter_lowpass_filter(sf_raw, cutoff=10.0, fs=fs, order=4)
+    sf = apply_signal_filter(sf_raw, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
     
     bw = np.mean(sf[:quiet_samples]) if quiet_samples < n_samples else np.mean(sf[:50])
     force_sd = np.std(sf[:quiet_samples]) if quiet_samples < n_samples else 5.0
@@ -107,14 +132,14 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples):
 
     return sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto
 
-def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lIdx):
+def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lIdx, filter_type="Butterworth LPF", cutoff=10.0):
     n_samples = len(sf_raw)
     fs = 1.0 / dt
     g = 9.80665
 
-    sf = butter_lowpass_filter(sf_raw, cutoff=10.0, fs=fs, order=4)
-    sl = butter_lowpass_filter(sl_raw, cutoff=10.0, fs=fs, order=4)
-    sr = butter_lowpass_filter(sr_raw, cutoff=10.0, fs=fs, order=4)
+    sf = apply_signal_filter(sf_raw, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
+    sl = apply_signal_filter(sl_raw, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
+    sr = apply_signal_filter(sr_raw, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
 
     quiet_samples = max(1, min(int(0.5 / dt), n_samples))
     
