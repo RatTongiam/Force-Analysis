@@ -211,7 +211,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
     fig_force.add_vline(x=t_split, line_width=1.5, line_dash="dash", line_color="#22c55e")
     fig_force.add_vline(x=t_takeoff, line_width=1.5, line_dash="dash", line_color="#dc2626")
 
-    # Dynamic Center Positions for Phase Labels
     mid_unweight = (t_start + t_braking) / 2.0
     mid_brake = (t_braking + t_split) / 2.0
     mid_prop = (t_split + t_takeoff) / 2.0
@@ -220,7 +219,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
 
     max_y = float(np.max(sf)) * 1.15 if len(sf) > 0 else 3000.0
 
-    # Text Annotations
     fig_force.add_annotation(x=mid_unweight, y=max_y * 0.98, text="Unweighting", showarrow=False, font=dict(size=11, color="#ca8a04", family="Arial Bold"))
     fig_force.add_annotation(x=mid_brake, y=max_y * 0.90, text="Braking", showarrow=False, font=dict(size=11, color="#ef4444", family="Arial Bold"))
     fig_force.add_annotation(x=mid_prop, y=max_y * 0.98, text="Propulsive", showarrow=False, font=dict(size=11, color="#22c55e", family="Arial Bold"))
@@ -263,50 +261,76 @@ if t is not None and f_total is not None and len(f_total) > 0:
     
     st.plotly_chart(fig_force, width="stretch")
 
-    # 2. PHASE BOUNDARY TIMELINE CONTROLS (UNIFIED 2-WAY SYNC)
+    # 2. PHASE BOUNDARY TIMELINE CONTROLS (SLIDER WITH +/- STEP BUTTONS)
     st.markdown("##### 🎚️ Phase Boundary Timeline Controls")
 
     c1, c2, c3, c4 = st.columns(4)
+
+    step_size = max(dt_val, 0.01) # ค่าสเต็ปสำหรับการกดปุ่ม +/-
 
     with c1:
         v1_min = t_min
         v1_max = max(v1_min + dt_val, t_braking - dt_val)
         val_1 = max(v1_min, min(st.session_state.t_start, v1_max))
         
-        new_start = st.number_input("1. Start Onset (s)", min_value=v1_min, max_value=v1_max, value=val_1, step=dt_val, format="%.3f", key="t_start_num")
-        st.slider("1. Start Onset Slider", min_value=v1_min, max_value=v1_max, value=new_start, step=dt_val, format="%.3f", label_visibility="collapsed", key="t_start_slider")
-        if st.session_state.t_start_slider != new_start:
-            new_start = st.session_state.t_start_slider
+        st.markdown(f"**1. Start Onset:** `{val_1:.3f} s`")
+        col_sub1, col_sub2, col_sub3 = st.columns([1, 4, 1])
+        with col_sub1:
+            if st.button("➖", key="btn_minus_1"):
+                val_1 = max(v1_min, val_1 - step_size)
+        with col_sub3:
+            if st.button("➕", key="btn_plus_1"):
+                val_1 = min(v1_max, val_1 + step_size)
+        
+        new_start = st.slider("1. Start Onset Slider", min_value=v1_min, max_value=v1_max, value=val_1, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_1")
 
     with c2:
         v2_min = max(t_min + dt_val, new_start + dt_val)
         v2_max = max(v2_min + dt_val, t_split - dt_val)
         val_2 = max(v2_min, min(st.session_state.t_braking, v2_max))
         
-        new_braking = st.number_input("2. Braking / Min Force (s)", min_value=v2_min, max_value=v2_max, value=val_2, step=dt_val, format="%.3f", key="t_braking_num")
-        st.slider("2. Braking Slider", min_value=v2_min, max_value=v2_max, value=new_braking, step=dt_val, format="%.3f", label_visibility="collapsed", key="t_braking_slider")
-        if st.session_state.t_braking_slider != new_braking:
-            new_braking = st.session_state.t_braking_slider
+        st.markdown(f"**2. Braking:** `{val_2:.3f} s`")
+        col_sub1, col_sub2, col_sub3 = st.columns([1, 4, 1])
+        with col_sub1:
+            if st.button("➖", key="btn_minus_2"):
+                val_2 = max(v2_min, val_2 - step_size)
+        with col_sub3:
+            if st.button("➕", key="btn_plus_2"):
+                val_2 = min(v2_max, val_2 + step_size)
+
+        new_braking = st.slider("2. Braking Slider", min_value=v2_min, max_value=v2_max, value=val_2, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_2")
 
     with c3:
         v3_min = max(t_min + 2 * dt_val, new_braking + dt_val)
         v3_max = max(v3_min + dt_val, t_takeoff - dt_val)
         val_3 = max(v3_min, min(st.session_state.t_split, v3_max))
         
-        new_split = st.number_input("3. Propulsive / V=0 (s)", min_value=v3_min, max_value=v3_max, value=val_3, step=dt_val, format="%.3f", key="t_split_num")
-        st.slider("3. Propulsive Slider", min_value=v3_min, max_value=v3_max, value=new_split, step=dt_val, format="%.3f", label_visibility="collapsed", key="t_split_slider")
-        if st.session_state.t_split_slider != new_split:
-            new_split = st.session_state.t_split_slider
+        st.markdown(f"**3. Propulsive (V=0):** `{val_3:.3f} s`")
+        col_sub1, col_sub2, col_sub3 = st.columns([1, 4, 1])
+        with col_sub1:
+            if st.button("➖", key="btn_minus_3"):
+                val_3 = max(v3_min, val_3 - step_size)
+        with col_sub3:
+            if st.button("➕", key="btn_plus_3"):
+                val_3 = min(v3_max, val_3 + step_size)
+
+        new_split = st.slider("3. Propulsive Slider", min_value=v3_min, max_value=v3_max, value=val_3, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_3")
 
     with c4:
         v4_min = max(t_min + 3 * dt_val, new_split + dt_val)
         v4_max = max(v4_min + dt_val, t_max)
         val_4 = max(v4_min, min(st.session_state.t_takeoff, v4_max))
         
-        new_takeoff = st.number_input("4. Take-off (s)", min_value=v4_min, max_value=v4_max, value=val_4, step=dt_val, format="%.3f", key="t_takeoff_num")
-        st.slider("4. Take-off Slider", min_value=v4_min, max_value=v4_max, value=new_takeoff, step=dt_val, format="%.3f", label_visibility="collapsed", key="t_takeoff_slider")
-        if st.session_state.t_takeoff_slider != new_takeoff:
-            new_takeoff = st.session_state.t_takeoff_slider
+        st.markdown(f"**4. Take-off:** `{val_4:.3f} s`")
+        col_sub1, col_sub2, col_sub3 = st.columns([1, 4, 1])
+        with col_sub1:
+            if st.button("➖", key="btn_minus_4"):
+                val_4 = max(v4_min, val_4 - step_size)
+        with col_sub3:
+            if st.button("➕", key="btn_plus_4"):
+                val_4 = min(v4_max, val_4 + step_size)
+
+        new_takeoff = st.slider("4. Take-off Slider", min_value=v4_min, max_value=v4_max, value=val_4, step=dt_val, format="%.3f", label_visibility="collapsed", key="slide_4")
 
     if (new_start, new_braking, new_split, new_takeoff) != (t_start, t_braking, t_split, t_takeoff):
         st.session_state.t_start = new_start
@@ -355,26 +379,19 @@ if t is not None and f_total is not None and len(f_total) > 0:
     deficits = np.where((sf >= 50) & (max_sl_sr > 0), ((sl - sr) / np.maximum(max_sl_sr, 1e-6)) * 100, 0)
     fig_deficit = go.Figure()
 
-    # Phase Rectangles
     fig_deficit.add_vrect(x0=t_start, x1=t_braking, fillcolor="rgba(234, 179, 8, 0.12)", line_width=0)
     fig_deficit.add_vrect(x0=t_braking, x1=t_split, fillcolor="rgba(239, 68, 68, 0.12)", line_width=0)
     fig_deficit.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="rgba(34, 197, 94, 0.12)", line_width=0)
 
-    # Vertical Boundary Lines
     fig_deficit.add_vline(x=t_start, line_width=1.5, line_dash="dash", line_color="#ca8a04")
     fig_deficit.add_vline(x=t_braking, line_width=1.5, line_dash="dash", line_color="#ef4444")
     fig_deficit.add_vline(x=t_split, line_width=1.5, line_dash="dash", line_color="#22c55e")
     fig_deficit.add_vline(x=t_takeoff, line_width=1.5, line_dash="dash", line_color="#dc2626")
 
-    # Zero Baseline
     fig_deficit.add_hline(y=0, line_width=1.2, line_color="#6b7280")
-
     fig_deficit.add_trace(go.Scatter(x=t, y=deficits, name="Asymmetry", fill='tozeroy', fillcolor='rgba(77, 41, 148, 0.15)', line=dict(color='#4d2994', width=1.5)))
-    
-    # Asymmetry Threshold Band
     fig_deficit.add_hrect(y0=-threshold_alert, y1=threshold_alert, fillcolor="rgba(34, 197, 94, 0.15)", line_width=0)
 
-    # Side Dominance Annotations on Y-Axis
     fig_deficit.add_annotation(
         xref="paper", yref="y",
         x=0.01, y=38,
