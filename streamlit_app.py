@@ -263,8 +263,28 @@ if t is not None and f_total is not None and len(f_total) > 0:
     
     st.plotly_chart(fig_force, width="stretch")
 
-    # 2. PHASE BOUNDARY TIMELINE CONTROLS WITH DIRECT STATE BINDING
+    # 2. PHASE BOUNDARY TIMELINE CONTROLS WITH STREAMLIT WIDGET CALLBACKS
     st.markdown("##### 🎚️ Phase Boundary Timeline Controls")
+
+    def sync_t_start():
+        st.session_state.t_start = st.session_state.input_num_1
+    def sync_t_start_slider():
+        st.session_state.t_start = st.session_state.input_slide_1
+
+    def sync_t_braking():
+        st.session_state.t_braking = st.session_state.input_num_2
+    def sync_t_braking_slider():
+        st.session_state.t_braking = st.session_state.input_slide_2
+
+    def sync_t_split():
+        st.session_state.t_split = st.session_state.input_num_3
+    def sync_t_split_slider():
+        st.session_state.t_split = st.session_state.input_slide_3
+
+    def sync_t_takeoff():
+        st.session_state.t_takeoff = st.session_state.input_num_4
+    def sync_t_takeoff_slider():
+        st.session_state.t_takeoff = st.session_state.input_slide_4
 
     c1, c2, c3, c4 = st.columns(4)
 
@@ -273,45 +293,36 @@ if t is not None and f_total is not None and len(f_total) > 0:
         v1_max = max(v1_min + dt_val, t_braking - dt_val)
         val_1 = max(v1_min, min(st.session_state.t_start, v1_max))
         
-        # ปรับแก้ค่าด้วย number_input แล้วอัปเดตลง session_state.t_start
-        new_v1 = st.number_input("1. Start Onset (s)", min_value=v1_min, max_value=v1_max, value=val_1, step=dt_val, format="%.3f", key="input_num_1")
-        slider_v1 = st.slider("1. Start Onset Slider", min_value=v1_min, max_value=v1_max, value=new_v1, step=dt_val, format="%.3f", label_visibility="collapsed", key="input_slide_1")
-        new_start = slider_v1
+        st.number_input("1. Start Onset (s)", min_value=v1_min, max_value=v1_max, value=val_1, step=dt_val, format="%.3f", key="input_num_1", on_change=sync_t_start)
+        st.slider("1. Start Onset Slider", min_value=v1_min, max_value=v1_max, value=val_1, step=dt_val, format="%.3f", label_visibility="collapsed", key="input_slide_1", on_change=sync_t_start_slider)
+        new_start = st.session_state.t_start
 
     with c2:
         v2_min = max(t_min + dt_val, new_start + dt_val)
         v2_max = max(v2_min + dt_val, t_split - dt_val)
         val_2 = max(v2_min, min(st.session_state.t_braking, v2_max))
         
-        new_v2 = st.number_input("2. Braking / Min Force (s)", min_value=v2_min, max_value=v2_max, value=val_2, step=dt_val, format="%.3f", key="input_num_2")
-        slider_v2 = st.slider("2. Braking Slider", min_value=v2_min, max_value=v2_max, value=new_v2, step=dt_val, format="%.3f", label_visibility="collapsed", key="input_slide_2")
-        new_braking = slider_v2
+        st.number_input("2. Braking / Min Force (s)", min_value=v2_min, max_value=v2_max, value=val_2, step=dt_val, format="%.3f", key="input_num_2", on_change=sync_t_braking)
+        st.slider("2. Braking Slider", min_value=v2_min, max_value=v2_max, value=val_2, step=dt_val, format="%.3f", label_visibility="collapsed", key="input_slide_2", on_change=sync_t_braking_slider)
+        new_braking = st.session_state.t_braking
 
     with c3:
         v3_min = max(t_min + 2 * dt_val, new_braking + dt_val)
         v3_max = max(v3_min + dt_val, t_takeoff - dt_val)
         val_3 = max(v3_min, min(st.session_state.t_split, v3_max))
         
-        new_v3 = st.number_input("3. Propulsive / V=0 (s)", min_value=v3_min, max_value=v3_max, value=val_3, step=dt_val, format="%.3f", key="input_num_3")
-        slider_v3 = st.slider("3. Propulsive Slider", min_value=v3_min, max_value=v3_max, value=new_v3, step=dt_val, format="%.3f", label_visibility="collapsed", key="input_slide_3")
-        new_split = slider_v3
+        st.number_input("3. Propulsive / V=0 (s)", min_value=v3_min, max_value=v3_max, value=val_3, step=dt_val, format="%.3f", key="input_num_3", on_change=sync_t_split)
+        st.slider("3. Propulsive Slider", min_value=v3_min, max_value=v3_max, value=val_3, step=dt_val, format="%.3f", label_visibility="collapsed", key="input_slide_3", on_change=sync_t_split_slider)
+        new_split = st.session_state.t_split
 
     with c4:
         v4_min = max(t_min + 3 * dt_val, new_split + dt_val)
         v4_max = max(v4_min + dt_val, t_max)
         val_4 = max(v4_min, min(st.session_state.t_takeoff, v4_max))
         
-        new_v4 = st.number_input("4. Take-off (s)", min_value=v4_min, max_value=v4_max, value=val_4, step=dt_val, format="%.3f", key="input_num_4")
-        slider_v4 = st.slider("4. Take-off Slider", min_value=v4_min, max_value=v4_max, value=new_v4, step=dt_val, format="%.3f", label_visibility="collapsed", key="input_slide_4")
-        new_takeoff = slider_v4
-
-    # อัปเดต Session State เมื่อมีการเปลี่ยนค่าใน Number Input หรือ Slider
-    if (new_start, new_braking, new_split, new_takeoff) != (t_start, t_braking, t_split, t_takeoff):
-        st.session_state.t_start = new_start
-        st.session_state.t_braking = new_braking
-        st.session_state.t_split = new_split
-        st.session_state.t_takeoff = new_takeoff
-        st.rerun()
+        st.number_input("4. Take-off (s)", min_value=v4_min, max_value=v4_max, value=val_4, step=dt_val, format="%.3f", key="input_num_4", on_change=sync_t_takeoff)
+        st.slider("4. Take-off Slider", min_value=v4_min, max_value=v4_max, value=val_4, step=dt_val, format="%.3f", label_visibility="collapsed", key="input_slide_4", on_change=sync_t_takeoff_slider)
+        new_takeoff = st.session_state.t_takeoff
 
     col_btn1, col_btn2 = st.columns([1, 4])
     with col_btn1:
