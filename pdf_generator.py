@@ -42,7 +42,7 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
     cell_bold = ParagraphStyle('TableCellBold', parent=cell_style, fontName='Helvetica-Bold')
     
     story = [
-        Paragraph("BIOMECHANICAL ANALYSIS REPORT (CMJ)", title_style),
+        Paragraph("CMJ ANALYSIS REPORT", title_style),
         Paragraph("FREE JUMPANZ TEAM — PRIMA MOTION TECHNOLOGY", subtitle_style),
         Spacer(1, 6)
     ]
