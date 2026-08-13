@@ -10,7 +10,7 @@ from parsers import (
     parse_single_csv_cforce,
     parse_musclelab_csv
 )
-from biomechanics import moving_average, detect_phases_sequential, calculate_metrics
+from biomechanics import apply_signal_filter, detect_phases_sequential, calculate_metrics
 from pdf_generator import generate_pdf_report
 
 st.set_page_config(layout="wide", page_title="Free JumpAnz Team - Prima Motion Tech")
@@ -28,7 +28,25 @@ data_mode = st.sidebar.radio("Select Input Mode", [
     "Single CSV (C-Force)"
 ])
 
-filter_size = st.sidebar.selectbox("Smoothing Filter", [1, 7, 15, 31], index=2)
+st.sidebar.markdown("---")
+st.sidebar.subheader("Signal Filtering Options")
+
+filter_type = st.sidebar.selectbox(
+    "Select Filter Algorithm",
+    ["Butterworth LPF", "Moving Average", "Raw Data (None)"],
+    index=0
+)
+
+if filter_type == "Butterworth LPF":
+    cutoff_freq = st.sidebar.slider("Cutoff Frequency (Hz)", min_value=5.0, max_value=100.0, value=10.0, step=5.0)
+    filter_size = 15
+elif filter_type == "Moving Average":
+    filter_size = st.sidebar.selectbox("Window Size (Frames)", [1, 7, 15, 31], index=2)
+    cutoff_freq = 10.0
+else:
+    cutoff_freq = 10.0
+    filter_size = 1
+
 threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
 
 dt, t, f_left, f_right, f_total = None, None, None, None, None
@@ -111,14 +129,17 @@ elif data_mode == "Single CSV (C-Force)":
             st.error(f"Error parsing Single CSV file: {e}")
 
 if t is not None and f_total is not None and len(f_total) > 0:
-    sf = moving_average(f_total, filter_size)
-    sl = moving_average(f_left, filter_size)
-    sr = moving_average(f_right, filter_size)
+    fs = 1.0 / dt
+    sf = apply_signal_filter(f_total, filter_type=filter_type, cutoff=cutoff_freq, fs=fs, window_size=filter_size)
+    sl = apply_signal_filter(f_left, filter_type=filter_type, cutoff=cutoff_freq, fs=fs, window_size=filter_size)
+    sr = apply_signal_filter(f_right, filter_type=filter_type, cutoff=cutoff_freq, fs=fs, window_size=filter_size)
     
     n_samples = len(sf)
     quiet_samples = max(1, min(int(0.5 / dt), n_samples))
 
-    sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto = detect_phases_sequential(t, sf, dt, quiet_samples)
+    sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto = detect_phases_sequential(
+        t, f_total, dt, quiet_samples, filter_type=filter_type, cutoff=cutoff_freq
+    )
 
     if "t_start" not in st.session_state or st.sidebar.button("🔄 Reset Phases"):
         st.session_state.t_start = float(t[sIdx_auto])
@@ -253,9 +274,12 @@ if t is not None and f_total is not None and len(f_total) > 0:
     
     lIdx = lIdx_curr
 
-    report = calculate_metrics(t, sf, sl, sr, dt, sIdx, bIdx, zIdx, tIdx, lIdx)
+    report = calculate_metrics(
+        t, f_total, f_left, f_right, dt, sIdx, bIdx, zIdx, tIdx, lIdx, 
+        filter_type=filter_type, cutoff=cutoff_freq
+    )
 
-    pdf_bytes = generate_pdf_report(report, t, sf, sl, sr, new_start, new_braking, new_split, new_takeoff)
+    pdf_bytes = generate_pdf_report(report, t, sf, sl, sr, new_start, new_braking, new_split, new_takeoff, threshold_alert=threshold_alert)
     st.sidebar.markdown("---")
     st.sidebar.download_button(
         label="📥 Download A4 PDF Report",
