@@ -1,13 +1,23 @@
 import io
 import numpy as np
 import matplotlib.pyplot as plt
+import urllib.request
+from PIL import Image as PILImage
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 
+def load_image_from_github(url):
+    try:
+        req = urllib.request.urlopen(url, timeout=3)
+        img = PILImage.open(io.BytesIO(req.read()))
+        return img
+    except Exception:
+        return None
+
 def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, crop_x_min=None, crop_x_max=None):
-    fig, ax = plt.subplots(figsize=(8.0, 2.6), dpi=200)
+    fig, ax = plt.subplots(figsize=(8.0, 2.8), dpi=200)
     
     # Plot Lines
     ax.plot(t, sl, color='#818cf8', linewidth=1.0, label='Left Limb')
@@ -26,10 +36,10 @@ def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeo
     ax.axvline(x=t_takeoff, color='#dc2626', linestyle='--', linewidth=1.2)
     
     # Dynamic Phase Labels
-    max_y = float(np.max(sf)) * 1.12 if len(sf) > 0 else 3000.0
-    ax.text((t_start + t_braking) / 2.0, max_y * 0.92, 'Unweighting', color='#ca8a04', fontsize=8, fontweight='bold', ha='center')
-    ax.text((t_braking + t_split) / 2.0, max_y * 0.82, 'Braking', color='#ef4444', fontsize=8, fontweight='bold', ha='center')
-    ax.text((t_split + t_takeoff) / 2.0, max_y * 0.92, 'Propulsive', color='#22c55e', fontsize=8, fontweight='bold', ha='center')
+    max_y = float(np.max(sf)) * 1.15 if len(sf) > 0 else 3000.0
+    ax.text((t_start + t_braking) / 2.0, max_y * 0.95, 'Unweighting', color='#ca8a04', fontsize=8, fontweight='bold', ha='center')
+    ax.text((t_braking + t_split) / 2.0, max_y * 0.88, 'Braking', color='#ef4444', fontsize=8, fontweight='bold', ha='center')
+    ax.text((t_split + t_takeoff) / 2.0, max_y * 0.95, 'Propulsive', color='#22c55e', fontsize=8, fontweight='bold', ha='center')
     
     # Crop X-axis Range if provided
     t_min = float(t[0]) if len(t) > 0 else 0.0
@@ -44,7 +54,34 @@ def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeo
     ax.set_title('FORCE-TIME ANALYSIS & SUB-PHASES', fontsize=11, fontweight='bold', color='#1e1b4b', pad=8)
     ax.grid(True, linestyle=':', alpha=0.5)
     ax.legend(loc='upper right', fontsize=8)
-    
+
+    # Load and Plot Pictograms (คนตัวอย่าง) บน Matplotlib
+    mid_unweight = (t_start + t_braking) / 2.0
+    mid_brake = (t_braking + t_split) / 2.0
+    mid_prop = (t_split + t_takeoff) / 2.0
+    mid_flight = t_takeoff + 0.25
+    mid_landing = t_takeoff + 0.6
+
+    github_base = "https://raw.githubusercontent.com/RatTongiam/Force-Analysis/main"
+    pic_configs = [
+        {"file": "Standing.png", "x": max(x_start + 0.1, t_start - 0.2)},
+        {"file": "UP.png", "x": mid_unweight},
+        {"file": "BP.png", "x": mid_brake},
+        {"file": "PP.png", "x": mid_prop},
+        {"file": "FP.png", "x": mid_flight},
+        {"file": "LP.png", "x": mid_landing},
+    ]
+
+    for pic in pic_configs:
+        img = load_image_from_github(f"{github_base}/{pic['file']}")
+        if img is not None:
+            # คำนวณตำแหน่งพิกัดสำหรับวางรูปภาพบน Axes
+            im_w = (x_end - x_start) * 0.08
+            im_h = max_y * 0.20
+            im_x = pic["x"] - im_w / 2.0
+            im_y = max_y * 0.58
+            ax.imshow(img, extent=[im_x, im_x + im_w, im_y, im_y + im_h], aspect='auto', zorder=5)
+
     plt.tight_layout()
     img_buf = io.BytesIO()
     plt.savefig(img_buf, format='png', bbox_inches='tight', dpi=200)
@@ -109,9 +146,9 @@ def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_ta
     story.append(Paragraph("PRIMA MOTION TECHNOLOGY — Technology that unlocks scientific insight", subtitle_style))
     story.append(Spacer(1, 6))
     
-    # Chart (ปรับขนาดความกว้าง/สูงให้พอดีหน้า A4 ไม่ดันตารางตกหน้า)
+    # Chart with Pictograms
     chart_buf = create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, crop_x_min, crop_x_max)
-    story.append(RLImage(chart_buf, width=535, height=170))
+    story.append(RLImage(chart_buf, width=535, height=185))
     story.append(Spacer(1, 6))
     
     # Table Data
