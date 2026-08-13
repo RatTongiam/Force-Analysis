@@ -120,27 +120,28 @@ if t is not None and f_total is not None and len(f_total) > 0:
 
     sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto = detect_phases_sequential(t, sf, dt, quiet_samples)
 
-    # Initializing Session State for Slider
-    if "t_phases" not in st.session_state or st.sidebar.button("🔄 Reset Phases"):
-        st.session_state.t_phases = (
-            float(t[sIdx_auto]),
-            float(t[bIdx_auto]),
-            float(t[zIdx_auto]),
-            float(t[tIdx_auto])
-        )
+    # Session State Initialization for Phase Times
+    if "t_start" not in st.session_state or st.sidebar.button("🔄 Reset Phases"):
+        st.session_state.t_start = float(t[sIdx_auto])
+        st.session_state.t_braking = float(t[bIdx_auto])
+        st.session_state.t_split = float(t[zIdx_auto])
+        st.session_state.t_takeoff = float(t[tIdx_auto])
 
     t_min = float(t[0])
     t_max = float(t[-1])
 
-    # 1. DRAW FORCE-TIME GRAPH FIRST
-    t_start, t_braking, t_split, t_takeoff = st.session_state.t_phases
+    t_start = st.session_state.t_start
+    t_braking = st.session_state.t_braking
+    t_split = st.session_state.t_split
+    t_takeoff = st.session_state.t_takeoff
 
+    # 1. DRAW FORCE-TIME GRAPH FIRST
     fig_force = go.Figure()
     fig_force.add_trace(go.Scatter(x=t, y=sl, name="Left Limb", line=dict(color='#818cf8', width=0.8)))
     fig_force.add_trace(go.Scatter(x=t, y=sr, name="Right Limb", line=dict(color='#f87171', width=0.8)))
     fig_force.add_trace(go.Scatter(x=t, y=sf, name="Total Force", line=dict(color='#4d2994', width=1.2)))
 
-    # Phase Shading Areas (Unweighting, Braking, Propulsive)
+    # Phase Shading Areas
     fig_force.add_vrect(x0=t_start, x1=t_braking, fillcolor="rgba(234, 179, 8, 0.12)", line_width=0, annotation_text="Unweighting", annotation_position="top left")
     fig_force.add_vrect(x0=t_braking, x1=t_split, fillcolor="rgba(239, 68, 68, 0.12)", line_width=0, annotation_text="Braking", annotation_position="top left")
     fig_force.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="rgba(34, 197, 94, 0.12)", line_width=0, annotation_text="Propulsive", annotation_position="top left")
@@ -162,29 +163,31 @@ if t is not None and f_total is not None and len(f_total) > 0:
     
     st.plotly_chart(fig_force, width="stretch")
 
-    # 2. SLIDING BAR BELOW THE GRAPH (EXACT TIME RANGE MATCHING GRAPH X-AXIS)
-    st.markdown("##### 🎚️ Phase Adjustment Slider (Start → Min Force → V=0 → Take-off)")
-    
-    new_t_phases = st.slider(
-        label="Adjust Phase Boundaries (Time in seconds):",
-        min_value=t_min,
-        max_value=t_max,
-        value=st.session_state.t_phases,
-        step=float(dt),
-        format="%.3f s"
-    )
+    # 2. SLIDERS BELOW THE GRAPH (BOUNDED & SEQUENTIAL)
+    st.markdown("##### 🎚️ Phase Adjustment Sliders")
+    c1, c2, c3, c4 = st.columns(4)
 
-    if new_t_phases != st.session_state.t_phases:
-        st.session_state.t_phases = new_t_phases
+    with c1:
+        new_start = st.slider("Start Onset (s)", min_value=t_min, max_value=t_braking, value=t_start, step=float(dt), format="%.3f")
+    with c2:
+        new_braking = st.slider("Braking / Min Force (s)", min_value=new_start, max_value=t_split, value=t_braking, step=float(dt), format="%.3f")
+    with c3:
+        new_split = st.slider("Propulsive / V=0 (s)", min_value=new_braking, max_value=t_takeoff, value=t_split, step=float(dt), format="%.3f")
+    with c4:
+        new_takeoff = st.slider("Take-off (s)", min_value=new_split, max_value=t_max, value=t_takeoff, step=float(dt), format="%.3f")
+
+    if (new_start, new_braking, new_split, new_takeoff) != (t_start, t_braking, t_split, t_takeoff):
+        st.session_state.t_start = new_start
+        st.session_state.t_braking = new_braking
+        st.session_state.t_split = new_split
+        st.session_state.t_takeoff = new_takeoff
         st.rerun()
 
     # Index Calculations
-    t_start, t_braking, t_split, t_takeoff = st.session_state.t_phases
-
-    sIdx = min(max(0, int(round((t_start - t[0]) / dt))), n_samples - 1)
-    bIdx = min(max(0, int(round((t_braking - t[0]) / dt))), n_samples - 1)
-    zIdx = min(max(0, int(round((t_split - t[0]) / dt))), n_samples - 1)
-    tIdx = min(max(0, int(round((t_takeoff - t[0]) / dt))), n_samples - 1)
+    sIdx = min(max(0, int(round((new_start - t[0]) / dt))), n_samples - 1)
+    bIdx = min(max(0, int(round((new_braking - t[0]) / dt))), n_samples - 1)
+    zIdx = min(max(0, int(round((new_split - t[0]) / dt))), n_samples - 1)
+    tIdx = min(max(0, int(round((new_takeoff - t[0]) / dt))), n_samples - 1)
     
     airborne_frames = np.where((np.arange(n_samples) >= tIdx) & (sf < 25.0))[0]
     if len(airborne_frames) > 0:
@@ -196,7 +199,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
 
     report = calculate_metrics(t, sf, sl, sr, dt, sIdx, bIdx, zIdx, tIdx, lIdx)
 
-    pdf_bytes = generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff)
+    pdf_bytes = generate_pdf_report(report, t, sf, sl, sr, new_start, new_braking, new_split, new_takeoff)
     st.sidebar.markdown("---")
     st.sidebar.download_button(
         label="📥 Download A4 PDF Report",
