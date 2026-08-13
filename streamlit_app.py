@@ -102,15 +102,18 @@ elif data_mode == "Dual TSV (QTM)":
     side_b = st.sidebar.selectbox("Assign Side File B", ["left", "right"], index=1)
     
     if file_a and file_b:
-        dt, data_a = parse_tsv(file_a)
-        _, data_b = parse_tsv(file_b)
-        num_frames = min(len(data_a), len(data_b))
-        t = np.arange(num_frames) * dt
-        fz_a = np.abs(data_a[:num_frames, 2])
-        fz_b = np.abs(data_b[:num_frames, 2])
-        f_left = fz_a if side_a == "left" else fz_b
-        f_right = fz_b if side_a == "left" else fz_a
-        f_total = f_left + f_right
+        try:
+            dt, data_a, fz_idx_a = parse_tsv(file_a)
+            _, data_b, fz_idx_b = parse_tsv(file_b)
+            num_frames = min(len(data_a), len(data_b))
+            t = np.arange(num_frames) * dt
+            fz_a = np.abs(data_a[:num_frames, fz_idx_a])
+            fz_b = np.abs(data_b[:num_frames, fz_idx_b])
+            f_left = fz_a if side_a == "left" else fz_b
+            f_right = fz_b if side_a == "left" else fz_a
+            f_total = f_left + f_right
+        except Exception as e:
+            st.error(f"Error parsing Dual TSV files: {e}")
 
 elif data_mode == "VALD ForceDecks CSV":
     file_vald = st.sidebar.file_uploader("Upload VALD ForceDecks File (.csv / .tsv)", type=["csv", "tsv"])
