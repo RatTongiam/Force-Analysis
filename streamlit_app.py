@@ -156,7 +156,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
     mid_brake = (t_braking + t_split) / 2.0
     mid_prop = (t_split + t_takeoff) / 2.0
     
-    # Estimate Landing Index for Flight Pictogram
     tIdx_curr = min(max(0, int(round((t_takeoff - t[0]) / dt))), n_samples - 1)
     airborne_frames = np.where((np.arange(n_samples) >= tIdx_curr) & (sf < 25.0))[0]
     lIdx_curr = n_samples - 1
@@ -176,7 +175,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
     fig_force.add_annotation(x=mid_brake, y=max_y * 0.90, text="Braking", showarrow=False, font=dict(size=11, color="#ef4444", family="Arial Bold"))
     fig_force.add_annotation(x=mid_prop, y=max_y * 0.98, text="Propulsive", showarrow=False, font=dict(size=11, color="#22c55e", family="Arial Bold"))
 
-    # GitHub Raw Assets Base URL
     github_base = "https://raw.githubusercontent.com/RatTongiam/Force-Analysis/main"
 
     pictograms = [
@@ -266,24 +264,54 @@ if t is not None and f_total is not None and len(f_total) > 0:
         mime="application/pdf"
     )
 
-    # 3. L/R ASYMMETRY % GRAPH
+    # 3. L/R ASYMMETRY % GRAPH WITH LEFT / RIGHT DOMINANCE LABELS
     deficits = np.where(sf >= 50, ((sl - sr) / np.maximum(sl, sr)) * 100, 0)
     fig_deficit = go.Figure()
 
+    # Phase Rectangles
     fig_deficit.add_vrect(x0=t_start, x1=t_braking, fillcolor="rgba(234, 179, 8, 0.12)", line_width=0)
     fig_deficit.add_vrect(x0=t_braking, x1=t_split, fillcolor="rgba(239, 68, 68, 0.12)", line_width=0)
     fig_deficit.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="rgba(34, 197, 94, 0.12)", line_width=0)
 
+    # Vertical Boundary Lines
     fig_deficit.add_vline(x=t_start, line_width=1.5, line_dash="dash", line_color="#ca8a04")
     fig_deficit.add_vline(x=t_braking, line_width=1.5, line_dash="dash", line_color="#ef4444")
     fig_deficit.add_vline(x=t_split, line_width=1.5, line_dash="dash", line_color="#22c55e")
     fig_deficit.add_vline(x=t_takeoff, line_width=1.5, line_dash="dash", line_color="#dc2626")
 
+    # Zero Baseline
+    fig_deficit.add_hline(y=0, line_width=1.2, line_color="#6b7280")
+
     fig_deficit.add_trace(go.Scatter(x=t, y=deficits, name="Asymmetry", fill='tozeroy', fillcolor='rgba(77, 41, 148, 0.15)', line=dict(color='#4d2994', width=1.5)))
     
+    # Asymmetry Threshold Band
     fig_deficit.add_hrect(y0=-threshold_alert, y1=threshold_alert, fillcolor="rgba(34, 197, 94, 0.15)", line_width=0)
+
+    # Side Dominance Annotations on Y-Axis
+    fig_deficit.add_annotation(
+        xref="paper", yref="y",
+        x=0.01, y=38,
+        text="<b>← Left Dominant (L > R)</b>",
+        showarrow=False,
+        font=dict(size=11, color="#818cf8"),
+        bgcolor="rgba(255, 255, 255, 0.8)",
+        bordercolor="#818cf8",
+        borderwidth=1
+    )
+
+    fig_deficit.add_annotation(
+        xref="paper", yref="y",
+        x=0.01, y=-38,
+        text="<b>← Right Dominant (R > L)</b>",
+        showarrow=False,
+        font=dict(size=11, color="#f87171"),
+        bgcolor="rgba(255, 255, 255, 0.8)",
+        bordercolor="#f87171",
+        borderwidth=1
+    )
+
     fig_deficit.update_layout(
-        title="L/R ASYMMETRY % (Threshold Alert)", 
+        title="L/R ASYMMETRY % (Threshold Alert & Limb Dominance)", 
         xaxis_title="Time (s)", 
         yaxis_title="Deficit %", 
         yaxis_range=[-55, 55], 
