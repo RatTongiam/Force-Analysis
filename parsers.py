@@ -172,7 +172,6 @@ def parse_musclelab_csv(uploaded_file):
     
     dt = 0.001  # 1000 Hz
     
-    # ตรวจหาตำแหน่งที่มีข้อมูลแรงสมบูรณ์ทั้งสองแผ่น
     valid_mask = ~np.isnan(f_left_raw) & ~np.isnan(f_right_raw) & (f_left_raw > 0) & (f_right_raw > 0)
     valid_indices = np.where(valid_mask)[0]
     
