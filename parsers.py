@@ -72,7 +72,8 @@ def parse_vald_forcedecks_exact(uploaded_file):
         df = pd.read_csv(io.StringIO(data_content))
         df.columns = [c.strip() for c in df.columns]
         
-        t = df['Time'].values.astype(float)
+        t_raw = df['Time'].values.astype(float)
+        t = t_raw - t_raw[0] if len(t_raw) > 0 else np.array([])
         dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
         
         f_left = np.abs(df['Z Left'].values.astype(float))
@@ -85,7 +86,8 @@ def parse_vald_forcedecks_exact(uploaded_file):
         df = pd.read_csv(io.StringIO(raw_text), skiprows=10, header=None, sep=sep, on_bad_lines='skip')
         df = df.apply(pd.to_numeric, errors='coerce').dropna(how='all')
         
-        t = df.iloc[:, 0].values.astype(float) if df.shape[1] > 0 else np.arange(len(df)) * 0.001
+        t_raw = df.iloc[:, 0].values.astype(float) if df.shape[1] > 0 else np.arange(len(df)) * 0.001
+        t = t_raw - t_raw[0] if len(t_raw) > 0 else np.arange(len(df)) * 0.001
         dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
         
         f_left = np.abs(df.iloc[:, 1].values.astype(float)) if df.shape[1] > 1 else np.zeros(len(df))
@@ -96,6 +98,7 @@ def parse_vald_forcedecks_exact(uploaded_file):
 def parse_qtm_json(uploaded_file):
     """
     อ่านไฟล์ Single JSON จาก Qualisys QTM
+    การันตีคำนวณแกนเวลา Relative Time เริ่มต้นที่ 0.0s เสมอ
     """
     uploaded_file.seek(0)
     content = json.load(uploaded_file)
@@ -175,7 +178,8 @@ def parse_single_csv_cforce(uploaded_file):
         return 0.001, np.array([]), np.array([]), np.array([]), np.array([])
         
     df = pd.DataFrame(data, columns=['time', 'force', 'left', 'right'])
-    t = df['time'].values.astype(float)
+    t_raw = df['time'].values.astype(float)
+    t = t_raw - t_raw[0] if len(t_raw) > 0 else np.array([])
     dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
     
     f_total = np.abs(df['force'].values.astype(float))
