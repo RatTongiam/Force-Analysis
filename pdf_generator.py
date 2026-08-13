@@ -21,7 +21,6 @@ def load_image_from_github(url):
         return None
 
 def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, crop_x_min=None, crop_x_max=None):
-    # ปรับสัดส่วน figsize ให้สูงและสมส่วน (สเกลธรรมชาติไม่แบน)
     fig, ax = plt.subplots(figsize=(9.0, 3.6), dpi=300)
     
     ax.plot(t, sl, color='#818cf8', linewidth=1.3, label='Left Limb')
@@ -37,7 +36,9 @@ def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeo
     ax.axvline(x=t_split, color='#22c55e', linestyle='--', linewidth=1.3)
     ax.axvline(x=t_takeoff, color='#dc2626', linestyle='--', linewidth=1.3)
     
-    max_y = float(np.max(sf)) * 1.15 if len(sf) > 0 else 3000.0
+    # เพิ่มพื้นที่ Y-axis ให้สูงขึ้น (คูณ 1.30 เพื่อเว้นที่ด้านบนไม่ให้หัวคนชนขอบ)
+    max_y = float(np.max(sf)) * 1.30 if len(sf) > 0 else 3000.0
+    
     ax.text((t_start + t_braking) / 2.0, max_y * 0.94, 'Unweighting', color='#ca8a04', fontsize=9.5, fontweight='bold', ha='center')
     ax.text((t_braking + t_split) / 2.0, max_y * 0.86, 'Braking', color='#ef4444', fontsize=9.5, fontweight='bold', ha='center')
     ax.text((t_split + t_takeoff) / 2.0, max_y * 0.94, 'Propulsive', color='#22c55e', fontsize=9.5, fontweight='bold', ha='center')
@@ -74,7 +75,8 @@ def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeo
         img = load_image_from_github(github_base + "/" + pic["file"])
         if img is not None:
             imagebox = OffsetImage(img, zoom=0.15)
-            ab = AnnotationBbox(imagebox, (pic["x"], max_y * 0.62), frameon=False, box_alignment=(0.5, 0.0))
+            # ปรับตำแหน่ง Y ของรูปคนให้อยู่ต่ำลงมาในพื้นที่ว่างด้านบนที่ขยายเพิ่ม
+            ab = AnnotationBbox(imagebox, (pic["x"], max_y * 0.52), frameon=False, box_alignment=(0.5, 0.0))
             ax.add_artist(ab)
 
     plt.tight_layout()
@@ -85,7 +87,6 @@ def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeo
     return img_buf
 
 def create_deficit_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, threshold_alert=15.0, crop_x_min=None, crop_x_max=None):
-    # ปรับสัดส่วนกราฟ Deficit ให้ได้สเกลความสูงและระยะห่างพอดีสมดุล
     fig, ax = plt.subplots(figsize=(9.0, 2.3), dpi=300)
     
     max_sl_sr = np.maximum(sl, sr)
@@ -179,12 +180,12 @@ def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_ta
     story.append(Paragraph("PRIMA MOTION TECHNOLOGY — Technology that unlocks scientific insight", subtitle_style))
     story.append(Spacer(1, 4))
     
-    # 1. กราฟ Force-Time (ความสูงสมส่วน ไม่แบน กระจายเต็มพื้นที่)
+    # 1. กราฟ Force-Time (เพิ่มความสูงแกน Y แล้ว)
     force_chart_buf = create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, crop_x_min, crop_x_max)
     story.append(RLImage(force_chart_buf, width=545, height=165))
     story.append(Spacer(1, 4))
     
-    # 2. ตารางค่าชีวกลศาสตร์ (Font ใหญ่อ่านชัดเจน คอลัมน์กว้างเต็มพื้นที่ 315pt)
+    # 2. ตารางค่าชีวกลศาสตร์
     table_data = [[
         Paragraph("Biomechanical Metric", header_style),
         Paragraph("Left", header_style),
@@ -221,7 +222,7 @@ def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_ta
     story.append(table)
     story.append(Spacer(1, 4))
 
-    # 3. กราฟ L/R Asymmetry Deficit % อยู่หน้าเดียวกันพอดีเป๊ะ
+    # 3. กราฟ L/R Asymmetry Deficit %
     deficit_chart_buf = create_deficit_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, threshold_alert, crop_x_min, crop_x_max)
     story.append(RLImage(deficit_chart_buf, width=545, height=105))
 
