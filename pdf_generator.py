@@ -1,9 +1,28 @@
 import io
+import requests
+import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+from PIL import Image as PILImage
+
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+def get_pictogram_image(filename):
+    """โหลดรูปภาพ PNG จาก GitHub Raw และแปลงเป็น OffsetImage สำหรับ Matplotlib"""
+    url = f"https://raw.githubusercontent.com/RatTongiam/Force-Analysis/main/{filename}"
+    try:
+        resp = requests.get(url, timeout=3)
+        if resp.status_code == 200:
+            img = PILImage.open(io.BytesIO(resp.content))
+            # ปรับสเกลขนาดรูปให้พอดีบนกราฟ PDF
+            img.thumbnail((40, 60))
+            return OffsetImage(img, zoom=0.4)
+    except Exception:
+        pass
+    return None
 
 def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff):
     pdf_buffer = io.BytesIO()
@@ -23,20 +42,64 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
         Spacer(1, 8)
     ]
 
-    # --- PLOT WITH THINNER LINES FOR BETTER READABILITY ---
-    fig_plt, ax = plt.subplots(figsize=(8, 2.8), dpi=200)
+    # --- PLOT WITH PICTOGRAMS & SUB-PHASES ---
+    fig_plt, ax = plt.subplots(figsize=(8, 3.2), dpi=200)
     ax.plot(t, sl, label='Left Limb', color='#818cf8', linewidth=0.8)
     ax.plot(t, sr, label='Right Limb', color='#f87171', linewidth=0.8)
     ax.plot(t, sf, label='Total Force', color='#4d2994', linewidth=1.2)
 
-    ax.axvspan(t_start, t_braking, color='yellow', alpha=0.15)
-    ax.axvspan(t_braking, t_split, color='red', alpha=0.15)
-    ax.axvspan(t_split, t_takeoff, color='green', alpha=0.15)
+    # Shading Areas
+    ax.axvspan(t_start, t_braking, color='#fef08a', alpha=0.35)
+    ax.axvspan(t_braking, t_split, color='#fca5a5', alpha=0.35)
+    ax.axvspan(t_split, t_takeoff, color='#bbf7d0', alpha=0.35)
 
+    # Vertical Dotted Boundary Lines
     ax.axvline(t_start, color='#ca8a04', linestyle='--', linewidth=0.8)
     ax.axvline(t_braking, color='#ef4444', linestyle='--', linewidth=0.8)
     ax.axvline(t_split, color='#22c55e', linestyle='--', linewidth=0.8)
     ax.axvline(t_takeoff, color='#dc2626', linestyle='--', linewidth=0.8)
+
+    # Dynamic Positioning for Pictograms & Labels
+    mid_unweight = (t_start + t_braking) / 2.0
+    mid_brake = (t_braking + t_split) / 2.0
+    mid_prop = (t_split + t_takeoff) / 2.0
+    
+    dt = t[1] - t[0] if len(t) > 1 else 0.001
+    n_samples = len(sf)
+    tIdx_curr = min(max(0, int(round((t_takeoff - t[0]) / dt))), n_samples - 1)
+    airborne = np.where((np.arange(n_samples) >= tIdx_curr) & (sf < 25.0))[0]
+    lIdx_curr = n_samples - 1
+    if len(airborne) > 0:
+        non_air = np.where((np.arange(n_samples) > airborne[0]) & (sf >= 25.0))[0]
+        if len(non_air) > 0:
+            lIdx_curr = non_air[0]
+
+    mid_flight = (t_takeoff + t[lIdx_curr]) / 2.0
+    mid_landing = min(t[-1], t[lIdx_curr] + 0.2)
+
+    max_y = float(np.max(sf)) * 1.25
+    ax.set_ylim(0, max_y)
+
+    # Add Text Annotations
+    ax.text(mid_unweight, max_y * 0.94, "Unweighting", fontsize=7, fontweight='bold', color='#ca8a04', ha='center')
+    ax.text(mid_brake, max_y * 0.87, "Braking", fontsize=7, fontweight='bold', color='#ef4444', ha='center')
+    ax.text(mid_prop, max_y * 0.94, "Propulsive", fontsize=7, fontweight='bold', color='#22c55e', ha='center')
+
+    # Add Pictogram Images to Matplotlib Axis
+    pics_config = [
+        ("Standing.png", max(t[0], t_start - 0.15)),
+        ("UP.png", mid_unweight),
+        ("BP.png", mid_brake),
+        ("PP.png", mid_prop),
+        ("FP.png", mid_flight),
+        ("LP.png", mid_landing)
+    ]
+
+    for fname, x_pos in pics_config:
+        img_box = get_pictogram_image(fname)
+        if img_box:
+            ab = AnnotationBbox(img_box, (x_pos, max_y * 0.72), frameon=False, pad=0)
+            ax.add_artist(ab)
 
     ax.set_title("FORCE-TIME ANALYSIS & SUB-PHASES", fontsize=9, fontweight='bold', color='#1a0f30')
     ax.set_xlabel("Time (s)", fontsize=8)
@@ -50,7 +113,7 @@ def generate_pdf_report(report_data, t, sf, sl, sr, t_start, t_braking, t_split,
     plt.close(fig_plt)
     img_buffer.seek(0)
 
-    story.append(Image(img_buffer, width=520, height=182))
+    story.append(Image(img_buffer, width=520, height=208))
     story.append(Spacer(1, 6))
     
     table_data = [[
