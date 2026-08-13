@@ -21,11 +21,11 @@ st.caption("PRIMA MOTION TECHNOLOGY — Technology that unlocks scientific insig
 st.sidebar.header("Data Import & Settings")
 
 data_mode = st.sidebar.radio("Select Input Mode", [
-    "MuscleLab CSV (.csv)",
-    "Dual TSV (Plate A + B)", 
-    "VALD ForceDecks (CSV/TSV)", 
-    "Single JSON (QTM)", 
-    "Single CSV (C-Force)"
+    "MuscleLab CSV",
+    "Single JSON (QTM)",
+    "Dual TSV (QTM)", 
+    "VALD ForceDecks CSV", 
+    "C-Force Performance CSV"
 ])
 
 st.sidebar.markdown("---")
@@ -51,38 +51,13 @@ threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=
 
 dt, t, f_left, f_right, f_total = None, None, None, None, None
 
-if data_mode == "MuscleLab CSV (.csv)":
+if data_mode == "MuscleLab CSV":
     file_ml = st.sidebar.file_uploader("Upload MuscleLab CSV File (.csv)", type=["csv"])
     if file_ml:
         try:
             dt, t, f_left, f_right, f_total = parse_musclelab_csv(file_ml)
         except Exception as e:
             st.error(f"Error parsing MuscleLab CSV file: {e}")
-
-elif data_mode == "Dual TSV (Plate A + B)":
-    file_a = st.sidebar.file_uploader("Upload Plate File A (.tsv)", type=["tsv"])
-    side_a = st.sidebar.selectbox("Assign Side File A", ["left", "right"], index=0)
-    file_b = st.sidebar.file_uploader("Upload Plate File B (.tsv)", type=["tsv"])
-    side_b = st.sidebar.selectbox("Assign Side File B", ["left", "right"], index=1)
-    
-    if file_a and file_b:
-        dt, data_a = parse_tsv(file_a)
-        _, data_b = parse_tsv(file_b)
-        num_frames = min(len(data_a), len(data_b))
-        t = np.arange(num_frames) * dt
-        fz_a = np.abs(data_a[:num_frames, 2])
-        fz_b = np.abs(data_b[:num_frames, 2])
-        f_left = fz_a if side_a == "left" else fz_b
-        f_right = fz_b if side_a == "left" else fz_a
-        f_total = f_left + f_right
-
-elif data_mode == "VALD ForceDecks (CSV/TSV)":
-    file_vald = st.sidebar.file_uploader("Upload VALD ForceDecks File (.csv / .tsv)", type=["csv", "tsv"])
-    if file_vald:
-        try:
-            dt, t, f_left, f_right, f_total = parse_vald_forcedecks_exact(file_vald)
-        except Exception as e:
-            st.error(f"Error parsing VALD ForceDecks file: {e}")
 
 elif data_mode == "Single JSON (QTM)":
     file_json = st.sidebar.file_uploader("Upload QTM JSON File (.json)", type=["json"])
@@ -120,7 +95,32 @@ elif data_mode == "Single JSON (QTM)":
         except Exception as e:
             st.error(f"Error parsing QTM JSON file: {e}")
 
-elif data_mode == "Single CSV (C-Force)":
+elif data_mode == "Dual TSV (QTM)":
+    file_a = st.sidebar.file_uploader("Upload Plate File A (.tsv)", type=["tsv"])
+    side_a = st.sidebar.selectbox("Assign Side File A", ["left", "right"], index=0)
+    file_b = st.sidebar.file_uploader("Upload Plate File B (.tsv)", type=["tsv"])
+    side_b = st.sidebar.selectbox("Assign Side File B", ["left", "right"], index=1)
+    
+    if file_a and file_b:
+        dt, data_a = parse_tsv(file_a)
+        _, data_b = parse_tsv(file_b)
+        num_frames = min(len(data_a), len(data_b))
+        t = np.arange(num_frames) * dt
+        fz_a = np.abs(data_a[:num_frames, 2])
+        fz_b = np.abs(data_b[:num_frames, 2])
+        f_left = fz_a if side_a == "left" else fz_b
+        f_right = fz_b if side_a == "left" else fz_a
+        f_total = f_left + f_right
+
+elif data_mode == "VALD ForceDecks CSV":
+    file_vald = st.sidebar.file_uploader("Upload VALD ForceDecks File (.csv / .tsv)", type=["csv", "tsv"])
+    if file_vald:
+        try:
+            dt, t, f_left, f_right, f_total = parse_vald_forcedecks_exact(file_vald)
+        except Exception as e:
+            st.error(f"Error parsing VALD ForceDecks file: {e}")
+
+elif data_mode == "C-Force Performance CSV":
     file_csv = st.sidebar.file_uploader("Upload Single CSV File (.csv)", type=["csv"])
     if file_csv:
         try:
