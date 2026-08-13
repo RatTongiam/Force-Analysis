@@ -96,7 +96,7 @@ def parse_vald_forcedecks_exact(uploaded_file):
 def parse_qtm_json(uploaded_file):
     """
     อ่านไฟล์ Single JSON จาก Qualisys QTM
-    การันตีแกนเวลา Relative Time (เริ่ม 0.0s เสมอ)
+    แก้ไขปัญหาการดึง Fx มาคิดเป็นแกนเวลาและคำนวณ dt อย่างถูกต้องแม่นยำ
     """
     uploaded_file.seek(0)
     content = json.load(uploaded_file)
@@ -106,28 +106,29 @@ def parse_qtm_json(uploaded_file):
     if len(plates) == 0:
         return []
         
+    # คำนวณ duration และ dt จาก Timebase ของ QTM
+    timebase = root.get("Timebase", {})
+    cam_freq = float(timebase.get("Frequency", 120.0))
+    tb_range = timebase.get("Range", {})
+    cam_start = tb_range.get("Start", 1)
+    cam_end = tb_range.get("End", 1200)
+    total_cam_frames = max(1, cam_end - cam_start + 1)
+    
+    duration = total_cam_frames / cam_freq  # ระยะเวลาการทดสอบจริงเป็นวินาที
+        
     plate_data = []
     for idx, plate in enumerate(plates):
         parts = plate.get("Parts", [])
         if len(parts) > 0 and len(parts[0].get("Values", [])) > 0:
             vals = np.array(parts[0]["Values"])
             if vals.shape[1] >= 9:
+                # ตรวจหาคอลัมน์แรงแนวตั้ง Fz (คอลัมน์ 2, 5 หรือ 8)
                 col_means = [np.mean(np.abs(vals[:, c])) for c in [2, 5, 8] if c < vals.shape[1]]
                 best_col = [2, 5, 8][np.argmax(col_means)] if col_means else 2
                 fz = np.abs(vals[:, best_col])
                 
-                range_info = parts[0].get("Range", {})
-                n_start = range_info.get("Start", 1)
-                n_end = range_info.get("End", len(fz))
-                total_frames = max(1, n_end - n_start + 1)
-                
-                timestamps = vals[:, 0] if vals.shape[1] > 0 else np.arange(total_frames)
-                if len(timestamps) > 1 and (timestamps[1] - timestamps[0]) > 0:
-                    dt = float(timestamps[1] - timestamps[0])
-                else:
-                    cam_freq = root.get("Timebase", {}).get("Frequency", 120.0)
-                    duration = total_frames / 2000.0 if total_frames > 5000 else total_frames / cam_freq
-                    dt = float(duration / total_frames) if total_frames > 0 else 1.0 / 2000.0
+                total_force_samples = len(fz)
+                dt = duration / total_force_samples if total_force_samples > 0 else 1.0 / 2400.0
                 
                 plate_data.append({
                     "id": idx,
