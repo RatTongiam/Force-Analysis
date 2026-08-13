@@ -31,7 +31,6 @@ def parse_tsv(uploaded_file):
         if len(parts) >= 3 and not line_str.startswith("FORCE_PLATE"):
             try:
                 vals = [float(p) for p in parts]
-                # กรองไม่เอาบรรทัดข้อมูลที่มีค่า NaN ติดมา
                 if not any(np.isnan(v) for v in vals):
                     data.append(vals)
             except ValueError:
@@ -41,13 +40,12 @@ def parse_tsv(uploaded_file):
     arr = np.array(data)
     num_cols = arr.shape[1] if len(arr) > 0 else 0
 
-    # Auto-detect ตำแหน่งคอลัมน์ Fz ตามประเภทโครงสร้างไฟล์ TSV
     if num_cols >= 11:
-        fz_idx = 4  # โครงสร้างแบบมี Frame, Time, Fx, Fy, Fz...
+        fz_idx = 4
     elif num_cols == 9:
-        fz_idx = 2  # โครงสร้างแบบไม่มี Frame/Time (เริ่มที่ Fx, Fy, Fz...)
+        fz_idx = 2
     else:
-        fz_idx = 2  # Fallback Default
+        fz_idx = 2
 
     return dt, arr, fz_idx
 
@@ -74,7 +72,7 @@ def parse_vald_forcedecks_exact(uploaded_file):
         
         t_raw = df['Time'].values.astype(float)
         t = t_raw - t_raw[0] if len(t_raw) > 0 else np.array([])
-        dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
+        dt = float(t[1] - t[0]) if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
         
         f_left = np.abs(df['Z Left'].values.astype(float))
         f_right = np.abs(df['Z Right'].values.astype(float))
@@ -88,7 +86,7 @@ def parse_vald_forcedecks_exact(uploaded_file):
         
         t_raw = df.iloc[:, 0].values.astype(float) if df.shape[1] > 0 else np.arange(len(df)) * 0.001
         t = t_raw - t_raw[0] if len(t_raw) > 0 else np.arange(len(df)) * 0.001
-        dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
+        dt = float(t[1] - t[0]) if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
         
         f_left = np.abs(df.iloc[:, 1].values.astype(float)) if df.shape[1] > 1 else np.zeros(len(df))
         f_right = np.abs(df.iloc[:, 4].values.astype(float)) if df.shape[1] > 4 else f_left
@@ -98,7 +96,7 @@ def parse_vald_forcedecks_exact(uploaded_file):
 def parse_qtm_json(uploaded_file):
     """
     อ่านไฟล์ Single JSON จาก Qualisys QTM
-    การันตีคำนวณแกนเวลา Relative Time เริ่มต้นที่ 0.0s เสมอ
+    การันตีแกนเวลา Relative Time (เริ่ม 0.0s เสมอ)
     """
     uploaded_file.seek(0)
     content = json.load(uploaded_file)
@@ -129,7 +127,7 @@ def parse_qtm_json(uploaded_file):
                 else:
                     cam_freq = root.get("Timebase", {}).get("Frequency", 120.0)
                     duration = total_frames / 2000.0 if total_frames > 5000 else total_frames / cam_freq
-                    dt = duration / total_frames if total_frames > 0 else 1.0 / 2000.0
+                    dt = float(duration / total_frames) if total_frames > 0 else 1.0 / 2000.0
                 
                 plate_data.append({
                     "id": idx,
@@ -180,7 +178,7 @@ def parse_single_csv_cforce(uploaded_file):
     df = pd.DataFrame(data, columns=['time', 'force', 'left', 'right'])
     t_raw = df['time'].values.astype(float)
     t = t_raw - t_raw[0] if len(t_raw) > 0 else np.array([])
-    dt = t[1] - t[0] if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
+    dt = float(t[1] - t[0]) if len(t) > 1 and (t[1] - t[0]) > 0 else 0.001
     
     f_total = np.abs(df['force'].values.astype(float))
     f_left = np.abs(df['left'].values.astype(float))
