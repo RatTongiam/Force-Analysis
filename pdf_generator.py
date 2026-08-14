@@ -23,26 +23,26 @@ def load_image_from_github(url):
 def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing, crop_x_min=None, crop_x_max=None):
     fig, ax = plt.subplots(figsize=(9.0, 3.6), dpi=300)
     
-    ax.plot(t, sl, color='#818cf8', linewidth=1.3, label='Left Limb')
-    ax.plot(t, sr, color='#f87171', linewidth=1.3, label='Right Limb')
-    ax.plot(t, sf, color='#4d2994', linewidth=2.0, label='Total Force')
+    # ปรับลดความหนาเส้นกราฟลง 50%
+    ax.plot(t, sl, color='#818cf8', linewidth=0.65, label='Left Limb')
+    ax.plot(t, sr, color='#f87171', linewidth=0.65, label='Right Limb')
+    ax.plot(t, sf, color='#4d2994', linewidth=1.0, label='Total Force')
     
-    # ไฮไลต์ Phase ต่างๆ รวมถึง Flight Phase
+    # ไฮไลต์ Phase ต่างๆ
     ax.axvspan(t_start, t_braking, color='#eab308', alpha=0.15)
     ax.axvspan(t_braking, t_split, color='#ef4444', alpha=0.15)
     ax.axvspan(t_split, t_takeoff, color='#22c55e', alpha=0.15)
     ax.axvspan(t_takeoff, t_landing, color='#94a3b8', alpha=0.15)
     
-    # เส้นแบ่ง Phase พร้อมเส้น Landing สีฟ้า (#0284c7)
-    ax.axvline(x=t_start, color='#ca8a04', linestyle='--', linewidth=1.3)
-    ax.axvline(x=t_braking, color='#ef4444', linestyle='--', linewidth=1.3)
-    ax.axvline(x=t_split, color='#22c55e', linestyle='--', linewidth=1.3)
-    ax.axvline(x=t_takeoff, color='#dc2626', linestyle='--', linewidth=1.3)
-    ax.axvline(x=t_landing, color='#0284c7', linestyle='--', linewidth=1.3)
+    # เส้นแบ่ง Phase (ลด linewidth ลง 50%)
+    ax.axvline(x=t_start, color='#ca8a04', linestyle='--', linewidth=0.65)
+    ax.axvline(x=t_braking, color='#ef4444', linestyle='--', linewidth=0.65)
+    ax.axvline(x=t_split, color='#22c55e', linestyle='--', linewidth=0.65)
+    ax.axvline(x=t_takeoff, color='#dc2626', linestyle='--', linewidth=0.65)
+    ax.axvline(x=t_landing, color='#0284c7', linestyle='--', linewidth=0.65)
     
     max_y = float(np.max(sf)) * 1.30 if len(sf) > 0 else 3000.0
     
-    # กำกับข้อความชื่อ Phase
     ax.text((t_start + t_braking) / 2.0, max_y * 0.94, 'Unweighting', color='#ca8a04', fontsize=9.0, fontweight='bold', ha='center')
     ax.text((t_braking + t_split) / 2.0, max_y * 0.86, 'Braking', color='#ef4444', fontsize=9.0, fontweight='bold', ha='center')
     ax.text((t_split + t_takeoff) / 2.0, max_y * 0.94, 'Propulsive', color='#22c55e', fontsize=9.0, fontweight='bold', ha='center')
@@ -57,7 +57,7 @@ def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeo
     ax.set_ylim(0, max_y)
     ax.set_ylabel('Force (N)', fontsize=10.5)
     ax.set_title('FORCE-TIME ANALYSIS & SUB-PHASES', fontsize=12, fontweight='bold', color='#1e1b4b', pad=8)
-    ax.grid(True, linestyle=':', alpha=0.6)
+    ax.grid(True, linestyle=':', alpha=0.6, linewidth=0.5)
     ax.legend(loc='upper right', fontsize=9.0)
 
     mid_unweight = (t_start + t_braking) / 2.0
@@ -101,14 +101,15 @@ def create_deficit_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_tak
     ax.axvspan(t_split, t_takeoff, color='#22c55e', alpha=0.15)
     ax.axvspan(t_takeoff, t_landing, color='#94a3b8', alpha=0.15)
 
-    ax.axvline(x=t_start, color='#ca8a04', linestyle='--', linewidth=1.3)
-    ax.axvline(x=t_braking, color='#ef4444', linestyle='--', linewidth=1.3)
-    ax.axvline(x=t_split, color='#22c55e', linestyle='--', linewidth=1.3)
-    ax.axvline(x=t_takeoff, color='#dc2626', linestyle='--', linewidth=1.3)
-    ax.axvline(x=t_landing, color='#0284c7', linestyle='--', linewidth=1.3)
+    # ปรับลดความหนาเส้นแบ่ง Phase และเส้นกราฟลง 50%
+    ax.axvline(x=t_start, color='#ca8a04', linestyle='--', linewidth=0.65)
+    ax.axvline(x=t_braking, color='#ef4444', linestyle='--', linewidth=0.65)
+    ax.axvline(x=t_split, color='#22c55e', linestyle='--', linewidth=0.65)
+    ax.axvline(x=t_takeoff, color='#dc2626', linestyle='--', linewidth=0.65)
+    ax.axvline(x=t_landing, color='#0284c7', linestyle='--', linewidth=0.65)
 
-    ax.axhline(y=0, color='#6b7280', linewidth=1.1)
-    ax.plot(t, deficits, color='#4d2994', linewidth=1.6, label='Asymmetry %')
+    ax.axhline(y=0, color='#6b7280', linewidth=0.55)
+    ax.plot(t, deficits, color='#4d2994', linewidth=0.8, label='Asymmetry %')
     ax.axhspan(-threshold_alert, threshold_alert, color='#22c55e', alpha=0.15)
 
     t_min = float(t[0]) if len(t) > 0 else 0.0
@@ -121,7 +122,7 @@ def create_deficit_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_tak
     ax.set_xlabel('Time (s)', fontsize=10)
     ax.set_ylabel('Deficit %', fontsize=10)
     ax.set_title('L/R ASYMMETRY % PROFILE', fontsize=11, fontweight='bold', color='#1e1b4b', pad=6)
-    ax.grid(True, linestyle=':', alpha=0.6)
+    ax.grid(True, linestyle=':', alpha=0.6, linewidth=0.5)
 
     plt.tight_layout()
     img_buf = io.BytesIO()
