@@ -36,18 +36,10 @@ def apply_signal_filter(data, filter_type="Butterworth LPF", cutoff=50.0, fs=100
 
     return filtered
 
-def moving_average(arr, window):
-    if window <= 1:
-        return arr
-    return pd.Series(arr).rolling(window=window, center=True, min_periods=1).mean().values
-
 def calc_avg(arr):
     return np.mean(arr) if len(arr) > 0 else 0.0
 
 def calc_impulse(arr, dt):
-    """
-    คำนวณ Impulse ด้วยวิธี Trapezoidal Rule
-    """
     if len(arr) < 2:
         return float(np.sum(arr) * dt)
     return float(np.trapezoid(arr, dx=dt))
@@ -69,7 +61,6 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples=None, filter_type="But
     fs = 1.0 / dt
     g = 9.80665
 
-    # 1. กรองสัญญาณเพื่อค้นหา Flight Block ด้วย scipy.ndimage.label
     sf = apply_signal_filter(sf_raw, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
     
     win_bw = min(int(1.0 * fs), n_samples) if quiet_samples is None else quiet_samples
@@ -101,7 +92,6 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples=None, filter_type="But
         tIdx_auto = max(int(0.5 * fs), global_peak_idx - int(0.2 * fs))
         lIdx_auto = min(n_samples - 1, tIdx_auto + int(0.4 * fs))
 
-    # คำนวณ Residual Force Offset ในช่วง Flight Phase เพื่อนำไปหักล้าง Linear Baseline Drift
     offset_l, offset_r = 0.0, 0.0
     if sl_raw is not None and sr_raw is not None and lIdx_auto > tIdx_auto:
         f_mid_start = tIdx_auto + int((lIdx_auto - tIdx_auto) * 0.25)
@@ -110,7 +100,6 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples=None, filter_type="But
             offset_l = float(np.mean(sl_raw[f_mid_start:f_mid_end]))
             offset_r = float(np.mean(sr_raw[f_mid_start:f_mid_end]))
 
-    # 2. ค้นหา Propulsive, Braking, Start
     prop_search_start = max(0, tIdx_auto - int(1.5 * fs))
     if tIdx_auto > prop_search_start:
         peak_prop_idx = prop_search_start + np.argmax(sf[prop_search_start:tIdx_auto])
@@ -131,7 +120,6 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples=None, filter_type="But
     else:
         sIdx_auto = max(0, bIdx_auto - int(0.4 * fs))
 
-    # อินทิเกรตหาจุด Zero-Velocity Crossing
     net_acc = (sf[sIdx_auto:tIdx_auto + 1] - bw) / mass
     vel_temp = np.zeros(len(net_acc))
     for k in range(1, len(net_acc)):
@@ -144,7 +132,6 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples=None, filter_type="But
     else:
         zIdx_auto = bIdx_auto
 
-    # 3. ตรวจสอบ Touchdown แยกขาซ้าย-ขวา บน Baseline Corrected Signal
     lIdx_l, lIdx_r = lIdx_auto, lIdx_auto
     if sl_raw is not None and sr_raw is not None:
         sl_zeroed = sl_raw - offset_l
@@ -167,7 +154,7 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples=None, filter_type="But
 
     return sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto, lIdx_l, lIdx_r, (offset_l, offset_r)
 
-def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lIdx, filter_type="Butterworth LPF", cutoff=50.0, offsets=(0.0, 0.0), lIdx_l=None, lIdx_r=None):
+def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lIdx, filter_type="Butterworth LPF", cutoff=50.0, offsets=(0.0, 0.0), lIdx_l=None, lIdx_r=None, group_by="variance"):
     n_samples = len(sf_raw)
     fs = 1.0 / dt
     g = 9.80665
@@ -177,7 +164,6 @@ def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lId
     sr_zeroed = sr_raw - offset_r
     sf_zeroed = sl_zeroed + sr_zeroed
 
-    # กรองสัญญาณหลังชดเชย Baseline Drift
     sf = apply_signal_filter(sf_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
     sl = apply_signal_filter(sl_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
     sr = apply_signal_filter(sr_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
@@ -190,7 +176,6 @@ def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lId
     
     mass = bw / g if bw > 0 else 70.0
 
-    # คำนวณความเร็ว (Velocity) และการกระจัด (Displacement) ด้วย Trapezoidal Numerical Integration
     vel_total = np.zeros(n_samples)
     disp_total = np.zeros(n_samples)
     
@@ -201,6 +186,8 @@ def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lId
 
     contraction_time = max(dt, t[tIdx] - t[sIdx])
     propulsive_dur = max(0.0, t[tIdx] - t[zIdx])
+    unweight_dur = max(0.0, t[bIdx] - t[sIdx])
+    braking_dur = max(0.0, t[zIdx] - t[bIdx])
     flight_dur = max(0.0, t[lIdx] - t[tIdx])
 
     jh_flight = (g * (flight_dur ** 2)) / 8.0 * 100.0
@@ -291,6 +278,55 @@ def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lId
     if lIdx_l is not None and lIdx_r is not None:
         diff_td = (t[lIdx_l] - t[lIdx_r]) * 1000.0
         touchdown_delay_ms = f"{diff_td:+.1f} ms"
+
+    if group_by == "phase":
+        return {
+            "1. Weighing & Onset Phase": {
+                "Body Mass (kg)": {"Left": f"{bw_left/g:.1f}", "Right": f"{bw_right/g:.1f}", "Total": f"{mass:.1f}", "Deficit": calc_deficit_str(bw_left, bw_right)},
+                "Body Weight (N)": {"Left": f"{bw_left:.0f}", "Right": f"{bw_right:.0f}", "Total": f"{bw:.0f}", "Deficit": calc_deficit_str(bw_left, bw_right)},
+                "Time to Peak Force (ms)": {"Left": "-", "Right": "-", "Total": f"{time_to_peak_force:.0f}", "Deficit": "-"}
+            },
+            "2. Unweighting Phase": {
+                "Unloading Duration (s)": {"Left": "-", "Right": "-", "Total": f"{unweight_dur:.3f}", "Deficit": "-"},
+                "Unloading Impulse (N·s)": {"Left": f"{unweight_impulse_l:.0f}", "Right": f"{unweight_impulse_r:.0f}", "Total": f"{unweight_impulse:.0f}", "Deficit": calc_deficit_str(unweight_impulse_l, unweight_impulse_r)},
+                "Peak Negative Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{peak_v_neg:.2f}", "Deficit": "-"}
+            },
+            "3. Braking (Eccentric) Phase": {
+                "Braking Duration (s)": {"Left": "-", "Right": "-", "Total": f"{braking_dur:.3f}", "Deficit": "-"},
+                "Peak Force during Braking Phase (N)": {"Left": f"{peak_brak_fl:.0f}", "Right": f"{peak_brak_fr:.0f}", "Total": f"{peak_brak_f:.0f}", "Deficit": calc_deficit_str(peak_brak_fl, peak_brak_fr)},
+                "Mean Force during Braking Phase (N)": {"Left": f"{avg_brak_fl:.0f}", "Right": f"{avg_brak_fr:.0f}", "Total": f"{avg_brak_f:.0f}", "Deficit": calc_deficit_str(avg_brak_fl, avg_brak_fr)},
+                "Braking Impulse (N·s)": {"Left": f"{brak_impulse_l:.0f}", "Right": f"{brak_impulse_r:.0f}", "Total": f"{brak_impulse:.0f}", "Deficit": calc_deficit_str(brak_impulse_l, brak_impulse_r)},
+                "Eccentric Braking RFD (N/s)": {"Left": f"{rfd_brak_l:.0f}", "Right": f"{rfd_brak_r:.0f}", "Total": f"{rfd_brak_tot:.0f}", "Deficit": calc_deficit_str(rfd_brak_l, rfd_brak_r)},
+                "Mean Power during Braking Phase (W)": {"Left": "-", "Right": "-", "Total": f"{abs(avg_brak_p):.0f}", "Deficit": "-"}
+            },
+            "4. Propulsive (Concentric) Phase": {
+                "Propulsive Phase Duration (s)": {"Left": "-", "Right": "-", "Total": f"{propulsive_dur:.3f}", "Deficit": "-"},
+                "Peak Force during Propulsive Phase (N)": {"Left": f"{peak_prop_fl:.0f}", "Right": f"{peak_prop_fr:.0f}", "Total": f"{peak_prop_f:.0f}", "Deficit": calc_deficit_str(peak_prop_fl, peak_prop_fr)},
+                "Mean Force during Propulsive Phase (N)": {"Left": f"{avg_prop_fl:.0f}", "Right": f"{avg_prop_fr:.0f}", "Total": f"{avg_prop_f:.0f}", "Deficit": calc_deficit_str(avg_prop_fl, avg_prop_fr)},
+                "Propulsive Impulse (N·s)": {"Left": f"{prop_impulse_l:.0f}", "Right": f"{prop_impulse_r:.0f}", "Total": f"{prop_impulse:.0f}", "Deficit": calc_deficit_str(prop_impulse_l, prop_impulse_r)},
+                "Peak Propulsive Power (W)": {"Left": "-", "Right": "-", "Total": f"{peak_prop_p:.0f}", "Deficit": "-"},
+                "Mean Propulsive Power (W)": {"Left": "-", "Right": "-", "Total": f"{avg_prop_p:.0f}", "Deficit": "-"},
+                "P1 Concentric Impulse (0-50ms) (N·s)": {"Left": f"{p1_imp_l:.1f}", "Right": f"{p1_imp_r:.1f}", "Total": f"{p1_imp:.1f}", "Deficit": calc_deficit_str(p1_imp_l, p1_imp_r)},
+                "P2 Concentric Impulse (50-100ms) (N·s)": {"Left": f"{p2_imp_l:.1f}", "Right": f"{p2_imp_r:.1f}", "Total": f"{p2_imp:.1f}", "Deficit": calc_deficit_str(p2_imp_l, p2_imp_r)}
+            },
+            "5. Flight & Performance Phase": {
+                "Jump Height - Impulse-Momentum (cm)": {"Left": "-", "Right": "-", "Total": f"{jh_impulse:.1f}", "Deficit": "-"},
+                "Jump Height - Flight Time (cm)": {"Left": "-", "Right": "-", "Total": f"{jh_flight:.1f}", "Deficit": "-"},
+                "Flight Phase Duration (s)": {"Left": "-", "Right": "-", "Total": f"{flight_dur:.3f}", "Deficit": "-"},
+                "Take-off Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{v_takeoff:.2f}", "Deficit": "-"},
+                "Peak Propulsive Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{peak_v_prop:.2f}", "Deficit": "-"},
+                "RSI Modified (AU)": {"Left": "-", "Right": "-", "Total": f"{rsi_modified:.2f}", "Deficit": "-"},
+                "Positive Impulse (N·s)": {"Left": f"{positive_impulse_l:.0f}", "Right": f"{positive_impulse_r:.0f}", "Total": f"{positive_impulse:.0f}", "Deficit": calc_deficit_str(positive_impulse_l, positive_impulse_r)},
+                "COM Height at Take-off (cm)": {"Left": "-", "Right": "-", "Total": f"{com_takeoff:.1f}", "Deficit": "-"}
+            },
+            "6. Landing & Strategy Phase": {
+                "Landing Impulse (N·s)": {"Left": f"{land_impulse_l:.0f}", "Right": f"{land_impulse_r:.0f}", "Total": f"{land_impulse:.0f}", "Deficit": calc_deficit_str(land_impulse_l, land_impulse_r)},
+                "Initial Touchdown Delay (L-R)": {"Left": f"{t[lIdx_l]:.3f} s" if lIdx_l else "-", "Right": f"{t[lIdx_r]:.3f} s" if lIdx_r else "-", "Total": touchdown_delay_ms, "Deficit": "-"},
+                "Countermovement Center of Mass Depth (cm)": {"Left": "-", "Right": "-", "Total": f"{com_depth:.1f}", "Deficit": "-"},
+                "Leg Stiffness (N/m)": {"Left": "-", "Right": "-", "Total": f"{leg_stiffness:.0f}" if leg_stiffness > 0 else "N/A", "Deficit": "-"},
+                "Flight Time to Jump Time Ratio (AU)": {"Left": "-", "Right": "-", "Total": f"{flight_jump_ratio:.2f}", "Deficit": "-"}
+            }
+        }
 
     return {
         "1. Performance Component (59% Variance)": {
