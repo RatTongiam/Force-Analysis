@@ -16,7 +16,7 @@ from pdf_generator import generate_pdf_report
 st.set_page_config(layout="wide", page_title="Free JumpAnz Team - Prima Motion Tech")
 
 # -------------------------------------------------------------
-# Sidebar: Display Settings & Theme Selection
+# 1. Sidebar: Presentation, Themes & Clinical Inputs
 # -------------------------------------------------------------
 st.sidebar.header("🎨 Theme & Presentation")
 
@@ -32,46 +32,49 @@ report_grouping = st.sidebar.radio(
     index=0
 )
 
-# Custom CSS Inject for Modern Coach Dashboard
+if "Coach" in app_theme:
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🏥 Clinical & Research Inputs")
+    involved_limb = st.sidebar.selectbox("Involved Limb", ["None / Athlete", "Left", "Right"], index=0)
+    baseline_jh = st.sidebar.number_input("Baseline JH (cm, optional)", value=0.0, step=0.5, format="%.1f")
+    mdc_pct = st.sidebar.number_input("MDC / Meaningful Change (%)", value=5.0, step=0.5, format="%.1f")
+else:
+    involved_limb = "None / Athlete"
+    baseline_jh = 0.0
+    mdc_pct = 5.0
+
+# Theme Color Palettes & CSS Injection
 if "Coach" in app_theme:
     col_l_hex = "#2f6fed"
     col_r_hex = "#ed7d31"
     col_tot_hex = "#11395f"
-    bg_banner = "linear-gradient(120deg, #0d3154, #1c507f)"
-    st.markdown(f"""
+    st.markdown("""
         <style>
-        .coach-header {{
-            background: {bg_banner};
-            color: #ffffff;
-            padding: 16px 20px;
-            border-radius: 12px;
-            margin-bottom: 15px;
-        }}
-        .kpi-card {{
-            background: #ffffff;
-            border: 1px solid #e4e9f1;
-            border-radius: 12px;
-            padding: 12px 16px;
-            box-shadow: 0 2px 6px rgba(16,24,40,.04);
-            text-align: center;
-        }}
-        .kpi-metric {{ font-size: 24px; font-weight: 800; color: #11395f; margin: 4px 0; }}
-        .kpi-sub {{ font-size: 11px; color: #667085; font-weight: 600; }}
-        .coach-box {{
-            background: #f7fbff;
-            border-left: 5px solid #11395f;
-            padding: 14px;
-            border-radius: 8px;
-            margin-bottom: 10px;
-        }}
-        .coach-action {{
-            background: #fff8f1;
-            border: 1px solid #f5d2b7;
-            padding: 10px 12px;
-            border-radius: 8px;
-            margin-top: 6px;
-            font-size: 13px;
-        }}
+        .coach-header {
+            background: linear-gradient(120deg, #0d3154, #1c507f);
+            color: #ffffff; padding: 18px 22px; border-radius: 12px; margin-bottom: 15px;
+        }
+        .kpi-card {
+            background: #ffffff; border: 1px solid #e4e9f1; border-radius: 12px;
+            padding: 12px 14px; box-shadow: 0 2px 6px rgba(16,24,40,.04); text-align: center;
+        }
+        .kpi-metric { font-size: 24px; font-weight: 800; color: #11395f; margin: 4px 0; }
+        .kpi-sub { font-size: 11px; color: #667085; font-weight: 600; }
+        .coach-box {
+            background: #f7fbff; border-left: 5px solid #11395f; padding: 14px;
+            border-radius: 8px; font-size: 13.5px; line-height: 1.5; margin-bottom: 8px;
+        }
+        .coach-action {
+            background: #fff8f1; border: 1px solid #f5d2b7; padding: 9px 12px;
+            border-radius: 8px; font-size: 12.5px; margin-top: 6px; color: #7c2d12;
+        }
+        .qc-banner-pass { background: #e9f7f0; color: #167a55; border: 1px solid #c9ead9; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; }
+        .qc-banner-review { background: #fff4dc; color: #8a5a00; border: 1px solid #f2dcaa; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; }
+        .qc-banner-reject { background: #fdecec; color: #a52b2b; border: 1px solid #f2caca; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; }
+        .status-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 800; }
+        .status-low { background: #e9f7f0; color: #167a55; }
+        .status-watch { background: #fff2d6; color: #9b6700; }
+        .status-flag { background: #fdecec; color: #b83232; }
         </style>
     """, unsafe_allow_html=True)
 else:
@@ -111,12 +114,12 @@ else:
 
 threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
 
-# Header Display
+# Dashboard Header
 if "Coach" in app_theme:
     st.markdown("""
         <div class="coach-header">
-            <h2 style="margin:0; font-size:24px; color:#fff;">CMJ Coach Analyzer — Research & Clinical</h2>
-            <p style="margin:4px 0 0; font-size:12px; color:#dce8f5;">Prima Motion Technology • Bilateral Asymmetry & Phase Dynamics Engine</p>
+            <h2 style="margin:0; font-size:24px; color:#fff;">CMJ Coach Analyzer v4 — Research & Clinical</h2>
+            <p style="margin:4px 0 0; font-size:12px; color:#dce8f5;">PRIMA MOTION TECHNOLOGY • Comprehensive Biomechanics & Dual-Plate Asymmetry Engine</p>
         </div>
     """, unsafe_allow_html=True)
 else:
@@ -126,6 +129,7 @@ else:
 dt, t, f_left, f_right, f_total = None, None, None, None, None
 file_signature = None
 
+# Parsers
 if data_mode == "MuscleLab CSV":
     file_ml = st.sidebar.file_uploader("Upload MuscleLab CSV File (.csv)", type=["csv"])
     if file_ml:
@@ -212,14 +216,30 @@ elif data_mode == "C-Force Performance CSV":
         except Exception as e:
             st.error(f"Error parsing Single CSV file: {e}")
 
+# Helper Functions
+def asym_badge(val_l, val_r):
+    try:
+        vl, vr = float(val_l), float(val_r)
+        mx = max(abs(vl), abs(vr))
+        if mx == 0:
+            return "-", '<span class="status-pill status-low">Equal</span>'
+        diff = ((vl - vr) / mx) * 100.0
+        txt = f"{abs(diff):.1f}% {'Left' if diff > 0 else 'Right'}"
+        cls = "status-low" if abs(diff) < 10 else ("status-watch" if abs(diff) < 15 else "status-flag")
+        badge = f'<span class="status-pill {cls}">{"Low" if abs(diff)<10 else ("Monitor" if abs(diff)<15 else "Flag")}</span>'
+        return txt, badge
+    except Exception:
+        return "-", "-"
+
 if t is not None and f_total is not None and len(f_total) > 0:
     dt_val = float(dt) if dt is not None and dt > 0 else 0.001
     fs = 1.0 / dt_val
+    g = 9.80665
     
     n_samples = len(f_total)
     quiet_samples = max(1, min(int(0.5 / dt_val), n_samples))
 
-    # Phase Detection on Zero-Offset Corrected RAW Data
+    # Phase Detection
     sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto, lIdx_l, lIdx_r, offsets = detect_phases_sequential(
         t, f_total, dt_val, quiet_samples=quiet_samples, 
         filter_type=filter_type, cutoff=cutoff_freq, 
@@ -249,7 +269,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
         st.session_state.is_confirmed = False
         st.session_state.current_file_sig = file_signature
 
-    # Strict Order Safeguard
     st.session_state.t_start = max(t_min, min(st.session_state.t_start, t_max - 4 * dt_val))
     st.session_state.t_braking = max(st.session_state.t_start + dt_val, min(st.session_state.t_braking, t_max - 3 * dt_val))
     st.session_state.t_split = max(st.session_state.t_braking + dt_val, min(st.session_state.t_split, t_max - 2 * dt_val))
@@ -262,7 +281,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
     t_takeoff = st.session_state.t_takeoff
     t_landing = st.session_state.t_landing
 
-    # Dynamic 20% Crop Padding
     total_duration = max(dt_val, t_landing - t_start)
     pad_time = 0.20 * total_duration
 
@@ -272,7 +290,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
     display_x_min = crop_x_min if st.session_state.get("is_confirmed", False) else t_min
     display_x_max = crop_x_max if st.session_state.get("is_confirmed", False) else t_max
 
-    # Index Calculations
     sIdx = min(max(0, int(round((t_start - t[0]) / dt_val))), n_samples - 1)
     bIdx = min(max(0, int(round((t_braking - t[0]) / dt_val))), n_samples - 1)
     zIdx = min(max(0, int(round((t_split - t[0]) / dt_val))), n_samples - 1)
@@ -287,127 +304,196 @@ if t is not None and f_total is not None and len(f_total) > 0:
         lIdx_l=lIdx_l, lIdx_r=lIdx_r, group_by=group_mode_param
     )
 
+    # Calculate Kinematics (COM Velocity & Power)
+    bw = np.mean(sf[:quiet_samples])
+    bw_sd = np.std(sf[:quiet_samples])
+    mass = bw / g if bw > 0 else 70.0
+
+    vel_total = np.zeros(n_samples)
+    disp_total = np.zeros(n_samples)
+    net_acc = (sf - bw) / mass
+    for i in range(sIdx + 1, min(tIdx + 1, n_samples)):
+        vel_total[i] = vel_total[i - 1] + 0.5 * (net_acc[i - 1] + net_acc[i]) * dt_val
+        disp_total[i] = disp_total[i - 1] + 0.5 * (vel_total[i - 1] + vel_total[i]) * dt_val
+
+    power_total = sf * vel_total
+    power_wkg = power_total / mass
+
+    # Specific Variables for Coach Dashboard
+    v_to = vel_total[tIdx]
+    flight_dur = max(0.0, t_landing - t_takeoff)
+    jh_imp_val = ((v_to ** 2) / (2.0 * g)) * 100.0
+    jh_flt_val = (g * (flight_dur ** 2)) / 8.0 * 100.0
+    ttt_val = max(dt_val, t_takeoff - t_start)
+    rsi_val = (jh_imp_val / 100.0) / ttt_val if ttt_val > 0 else 0.0
+    ppk_wkg = np.max(power_wkg[zIdx:tIdx+1]) if tIdx > zIdx else 0.0
+    com_depth = abs(disp_total[zIdx] - disp_total[sIdx]) * 100.0
+
+    # Net / Gross Impulse
+    l_bw = np.mean(sl[:quiet_samples])
+    r_bw = np.mean(sr[:quiet_samples])
+    
+    br_net_l = float(np.trapezoid(sl[bIdx:zIdx+1] - l_bw, dx=dt_val)) if zIdx > bIdx else 0.0
+    br_net_r = float(np.trapezoid(sr[bIdx:zIdx+1] - r_bw, dx=dt_val)) if zIdx > bIdx else 0.0
+    br_gross_l = float(np.trapezoid(sl[bIdx:zIdx+1], dx=dt_val)) if zIdx > bIdx else 0.0
+    br_gross_r = float(np.trapezoid(sr[bIdx:zIdx+1], dx=dt_val)) if zIdx > bIdx else 0.0
+    
+    pr_net_l = float(np.trapezoid(sl[zIdx:tIdx+1] - l_bw, dx=dt_val)) if tIdx > zIdx else 0.0
+    pr_net_r = float(np.trapezoid(sr[zIdx:tIdx+1] - r_bw, dx=dt_val)) if tIdx > zIdx else 0.0
+    pr_gross_l = float(np.trapezoid(sl[zIdx:tIdx+1], dx=dt_val)) if tIdx > zIdx else 0.0
+    pr_gross_r = float(np.trapezoid(sr[zIdx:tIdx+1], dx=dt_val)) if tIdx > zIdx else 0.0
+
+    pk_br_l = np.max(sl[bIdx:zIdx+1]) if zIdx > bIdx else 0.0
+    pk_br_r = np.max(sr[bIdx:zIdx+1]) if zIdx > bIdx else 0.0
+    pk_pr_l = np.max(sl[zIdx:tIdx+1]) if tIdx > zIdx else 0.0
+    pk_pr_r = np.max(sr[zIdx:tIdx+1]) if tIdx > zIdx else 0.0
+
+    # Landing Load Variables
+    land_search_end = min(n_samples, lIdx + int(0.5 / dt_val))
+    pk_land_tot = np.max(sf[lIdx:land_search_end]) if land_search_end > lIdx else 0.0
+    pk_land_l = np.max(sl[lIdx:land_search_end]) if land_search_end > lIdx else 0.0
+    pk_land_r = np.max(sr[lIdx:land_search_end]) if land_search_end > lIdx else 0.0
+    ttp_land_ms = (np.argmax(sf[lIdx:land_search_end]) * dt_val) * 1000.0 if land_search_end > lIdx else 0.0
+    
+    imp_250_end = min(n_samples, lIdx + int(0.25 / dt_val))
+    land_imp_250_l = float(np.trapezoid(sl[lIdx:imp_250_end], dx=dt_val)) if imp_250_end > lIdx else 0.0
+    land_imp_250_r = float(np.trapezoid(sr[lIdx:imp_250_end], dx=dt_val)) if imp_250_end > lIdx else 0.0
+    land_imp_250_tot = land_imp_250_l + land_imp_250_r
+
+    # Loading Rate 20-80%
+    pk_idx = lIdx + np.argmax(sf[lIdx:land_search_end]) if land_search_end > lIdx else lIdx
+    f_20 = 0.20 * pk_land_tot
+    f_80 = 0.80 * pk_land_tot
+    sub_land = sf[lIdx:pk_idx+1]
+    idx_20 = np.where(sub_land >= f_20)[0]
+    idx_80 = np.where(sub_land >= f_80)[0]
+    if len(idx_20) > 0 and len(idx_80) > 0 and idx_80[0] > idx_20[0]:
+        load_rate = (f_80 - f_20) / ((idx_80[0] - idx_20[0]) * dt_val)
+    else:
+        load_rate = 0.0
+
     # -------------------------------------------------------------
-    # KPI Scorecard for Modern Coach Theme
+    # 2. Modern Dashboard: Top KPI Cards
     # -------------------------------------------------------------
     if "Coach" in app_theme:
-        jh_val = report.get("5. Flight & Performance Phase", {}).get("Jump Height - Impulse-Momentum (cm)", {}).get("Total", "-")
-        if jh_val == "-":
-            jh_val = report.get("1. Performance Component (59% Variance)", {}).get("Jump Height - Impulse-Momentum (cm)", {}).get("Total", "-")
-        
-        rsi_val = report.get("5. Flight & Performance Phase", {}).get("RSI Modified (AU)", {}).get("Total", "-")
-        if rsi_val == "-":
-            rsi_val = report.get("1. Performance Component (59% Variance)", {}).get("RSI Modified (AU)", {}).get("Total", "-")
-        
-        peak_p_val = report.get("4. Propulsive (Concentric) Phase", {}).get("Peak Propulsive Power (W)", {}).get("Total", "-")
-        if peak_p_val == "-":
-            peak_p_val = report.get("1. Performance Component (59% Variance)", {}).get("Peak Propulsive Power (W)", {}).get("Total", "-")
-        
-        ttt_ms = (t_takeoff - t_start) * 1000.0
-
         k1, k2, k3, k4 = st.columns(4)
         with k1:
-            st.markdown(f'<div class="kpi-card"><div class="kpi-sub">JUMP HEIGHT (IMPULSE)</div><div class="kpi-metric">{jh_val} cm</div><div class="kpi-sub">Standard Kinetics</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="kpi-card"><div class="kpi-sub">JUMP HEIGHT (IMPULSE)</div><div class="kpi-metric">{jh_imp_val:.1f} cm</div><div class="kpi-sub">Preferred Kinetics</div></div>', unsafe_allow_html=True)
         with k2:
-            st.markdown(f'<div class="kpi-card"><div class="kpi-sub">RSI MODIFIED</div><div class="kpi-metric">{rsi_val}</div><div class="kpi-sub">JH (m) / Contraction Time</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="kpi-card"><div class="kpi-sub">JUMP HEIGHT (FLIGHT)</div><div class="kpi-metric">{jh_flt_val:.1f} cm</div><div class="kpi-sub">Quality-check Estimate</div></div>', unsafe_allow_html=True)
         with k3:
-            st.markdown(f'<div class="kpi-card"><div class="kpi-sub">PEAK PROPULSIVE POWER</div><div class="kpi-metric">{peak_p_val} W</div><div class="kpi-sub">Concentric Peak</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="kpi-card"><div class="kpi-sub">RSI MODIFIED</div><div class="kpi-metric">{rsi_val:.2f}</div><div class="kpi-sub">JH (m) / TTT (s)</div></div>', unsafe_allow_html=True)
         with k4:
-            st.markdown(f'<div class="kpi-card"><div class="kpi-sub">TIME TO TAKE-OFF</div><div class="kpi-metric">{ttt_ms:.0f} ms</div><div class="kpi-sub">Movement Duration</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="kpi-card"><div class="kpi-sub">PEAK CONCENTRIC POWER</div><div class="kpi-metric">{ppk_wkg:.1f} W/kg</div><div class="kpi-sub">{ppk_wkg*mass:.0f} W Total</div></div>', unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
-    # 1. FORCE-TIME PLOT
-    fig_force = go.Figure()
-    fig_force.add_trace(go.Scatter(x=t, y=sl, name="Left Limb", line=dict(color=col_l_hex, width=1.1 if "Coach" in app_theme else 0.8)))
-    fig_force.add_trace(go.Scatter(x=t, y=sr, name="Right Limb", line=dict(color=col_r_hex, width=1.1 if "Coach" in app_theme else 0.8)))
-    fig_force.add_trace(go.Scatter(x=t, y=sf, name="Total Force", line=dict(color=col_tot_hex, width=1.8 if "Coach" in app_theme else 1.2)))
+    # -------------------------------------------------------------
+    # 3. Main Interactive Curve & Coach Snapshot
+    # -------------------------------------------------------------
+    if "Coach" in app_theme:
+        col_g, col_s = st.columns([8, 4])
+    else:
+        col_g = st.container()
 
-    fig_force.add_vrect(x0=t_start, x1=t_braking, fillcolor="rgba(234, 179, 8, 0.12)", line_width=0)
-    fig_force.add_vrect(x0=t_braking, x1=t_split, fillcolor="rgba(239, 68, 68, 0.12)", line_width=0)
-    fig_force.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="rgba(34, 197, 94, 0.12)", line_width=0)
-    fig_force.add_vrect(x0=t_takeoff, x1=t_landing, fillcolor="rgba(148, 163, 184, 0.12)", line_width=0)
+    with col_g:
+        fig_force = go.Figure()
+        fig_force.add_trace(go.Scatter(x=t, y=sl, name="Left Limb", line=dict(color=col_l_hex, width=1.1 if "Coach" in app_theme else 0.8)))
+        fig_force.add_trace(go.Scatter(x=t, y=sr, name="Right Limb", line=dict(color=col_r_hex, width=1.1 if "Coach" in app_theme else 0.8)))
+        fig_force.add_trace(go.Scatter(x=t, y=sf, name="Total Force", line=dict(color=col_tot_hex, width=1.8 if "Coach" in app_theme else 1.2)))
 
-    fig_force.add_vline(x=t_start, line_width=1.5, line_dash="dash", line_color="#ca8a04")
-    fig_force.add_vline(x=t_braking, line_width=1.5, line_dash="dash", line_color="#ef4444")
-    fig_force.add_vline(x=t_split, line_width=1.5, line_dash="dash", line_color="#22c55e")
-    fig_force.add_vline(x=t_takeoff, line_width=1.5, line_dash="dash", line_color="#dc2626")
-    fig_force.add_vline(x=t_landing, line_width=1.5, line_dash="dash", line_color="#0284c7")
+        fig_force.add_vrect(x0=t_start, x1=t_braking, fillcolor="rgba(234, 179, 8, 0.12)", line_width=0)
+        fig_force.add_vrect(x0=t_braking, x1=t_split, fillcolor="rgba(239, 68, 68, 0.12)", line_width=0)
+        fig_force.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="rgba(34, 197, 94, 0.12)", line_width=0)
+        fig_force.add_vrect(x0=t_takeoff, x1=t_landing, fillcolor="rgba(148, 163, 184, 0.12)", line_width=0)
 
-    mid_unweight = (t_start + t_braking) / 2.0
-    mid_brake = (t_braking + t_split) / 2.0
-    mid_prop = (t_split + t_takeoff) / 2.0
-    mid_flight = (t_takeoff + t_landing) / 2.0
-    mid_landing = min(t_max, t_landing + 0.2)
+        fig_force.add_vline(x=t_start, line_width=1.5, line_dash="dash", line_color="#ca8a04")
+        fig_force.add_vline(x=t_braking, line_width=1.5, line_dash="dash", line_color="#ef4444")
+        fig_force.add_vline(x=t_split, line_width=1.5, line_dash="dash", line_color="#22c55e")
+        fig_force.add_vline(x=t_takeoff, line_width=1.5, line_dash="dash", line_color="#dc2626")
+        fig_force.add_vline(x=t_landing, line_width=1.5, line_dash="dash", line_color="#0284c7")
 
-    max_y = float(np.max(sf)) * 1.15 if len(sf) > 0 else 3000.0
+        max_y = float(np.max(sf)) * 1.15 if len(sf) > 0 else 3000.0
+        fig_force.add_annotation(x=(t_start+t_braking)/2, y=max_y*0.98, text="Unweighting", showarrow=False, font=dict(size=11, color="#ca8a04", family="Arial Bold"))
+        fig_force.add_annotation(x=(t_braking+t_split)/2, y=max_y*0.90, text="Braking", showarrow=False, font=dict(size=11, color="#ef4444", family="Arial Bold"))
+        fig_force.add_annotation(x=(t_split+t_takeoff)/2, y=max_y*0.98, text="Propulsive", showarrow=False, font=dict(size=11, color="#22c55e", family="Arial Bold"))
+        fig_force.add_annotation(x=(t_takeoff+t_landing)/2, y=max_y*0.90, text="Flight", showarrow=False, font=dict(size=11, color="#64748b", family="Arial Bold"))
 
-    fig_force.add_annotation(x=mid_unweight, y=max_y * 0.98, text="Unweighting", showarrow=False, font=dict(size=11, color="#ca8a04", family="Arial Bold"))
-    fig_force.add_annotation(x=mid_brake, y=max_y * 0.90, text="Braking", showarrow=False, font=dict(size=11, color="#ef4444", family="Arial Bold"))
-    fig_force.add_annotation(x=mid_prop, y=max_y * 0.98, text="Propulsive", showarrow=False, font=dict(size=11, color="#22c55e", family="Arial Bold"))
-    fig_force.add_annotation(x=mid_flight, y=max_y * 0.90, text="Flight", showarrow=False, font=dict(size=11, color="#64748b", family="Arial Bold"))
-
-    github_base = "https://raw.githubusercontent.com/RatTongiam/Force-Analysis/main"
-    pictograms = [
-        {"url": f"{github_base}/Standing.png", "x": max(display_x_min + 0.1, t_start - 0.2)},
-        {"url": f"{github_base}/UP.png", "x": mid_unweight},
-        {"url": f"{github_base}/BP.png", "x": mid_brake},
-        {"url": f"{github_base}/PP.png", "x": mid_prop},
-        {"url": f"{github_base}/FP.png", "x": mid_flight},
-        {"url": f"{github_base}/LP.png", "x": mid_landing},
-    ]
-
-    for pic in pictograms:
-        fig_force.add_layout_image(
-            dict(
-                source=pic["url"], xref="x", yref="y",
-                x=pic["x"], y=max_y * 0.75,
-                sizex=0.15, sizey=max_y * 0.22,
-                xanchor="center", yanchor="bottom",
-                layer="above"
+        github_base = "https://raw.githubusercontent.com/RatTongiam/Force-Analysis/main"
+        pictograms = [
+            {"url": f"{github_base}/Standing.png", "x": max(display_x_min + 0.1, t_start - 0.2)},
+            {"url": f"{github_base}/UP.png", "x": (t_start + t_braking) / 2.0},
+            {"url": f"{github_base}/BP.png", "x": (t_braking + t_split) / 2.0},
+            {"url": f"{github_base}/PP.png", "x": (t_split + t_takeoff) / 2.0},
+            {"url": f"{github_base}/FP.png", "x": (t_takeoff + t_landing) / 2.0},
+            {"url": f"{github_base}/LP.png", "x": min(t_max, t_landing + 0.2)},
+        ]
+        for pic in pictograms:
+            fig_force.add_layout_image(
+                dict(
+                    source=pic["url"], xref="x", yref="y", x=pic["x"], y=max_y * 0.75,
+                    sizex=0.15, sizey=max_y * 0.22, xanchor="center", yanchor="bottom", layer="above"
+                )
             )
+
+        fig_force.update_layout(
+            title="FORCE-TIME ANALYSIS & SUB-PHASES",
+            xaxis_title="Time (s)", yaxis_title="Force (N)",
+            height=460, margin=dict(l=40, r=40, t=50, b=20)
         )
+        fig_force.update_xaxes(range=[display_x_min, display_x_max])
+        st.plotly_chart(fig_force, width="stretch")
 
-    fig_force.update_layout(
-        title="FORCE-TIME ANALYSIS & SUB-PHASES",
-        xaxis_title="Time (s)", yaxis_title="Force (N)",
-        height=480, margin=dict(l=40, r=40, t=50, b=20)
-    )
-    fig_force.update_xaxes(range=[display_x_min, display_x_max])
-    st.plotly_chart(fig_force, width="stretch")
+    if "Coach" in app_theme:
+        with col_s:
+            st.markdown("### 📋 Coach Snapshot")
+            p_asym_txt, _ = asym_badge(pr_net_l, pr_net_r)
+            l_asym_txt, _ = asym_badge(pk_land_l, pk_land_r)
+            p_diff = ((pr_net_l - pr_net_r) / max(pr_net_l, pr_net_r, 1e-6)) * 100.0
+            l_diff = ((pk_land_l - pk_land_r) / max(pk_land_l, pk_land_r, 1e-6)) * 100.0
 
-    # 2. PHASE BOUNDARY TIMELINE CONTROLS
+            if abs(p_diff) < 10 and abs(l_diff) >= 15:
+                headline = f"Take-off net impulse สมดุล แต่ peak landing load เอนไปทาง {'Left' if l_diff > 0 else 'Right'}"
+            elif abs(p_diff) >= 15:
+                headline = f"พบ directional asymmetry ใน propulsion net impulse ไปทาง {'Left' if p_diff > 0 else 'Right'}"
+            else:
+                headline = "การกระจายแรงซ้าย–ขวาช่วง propulsion อยู่ในเกณฑ์สมดุล"
+
+            st.markdown(f"""
+                <div class="coach-box">
+                    <b>{headline}</b><br><br>
+                    JH (Impulse): <b>{jh_imp_val:.1f} cm</b> | RSImod: <b>{rsi_val:.2f}</b><br>
+                    Propulsion Net Asymmetry: <b>{p_asym_txt}</b><br>
+                    Landing Peak Asymmetry: <b>{l_asym_txt}</b>
+                </div>
+            """, unsafe_allow_html=True)
+
+            if abs(l_diff) >= 15:
+                st.markdown(f'<div class="coach-action">⚠️ <b>Landing Bias:</b> ขาข้าง {"Left" if l_diff > 0 else "Right"} รับแรงกระแทกสูงสุดมากกว่าปกติ ตรวจสอบเทคนิคการลงสู่พื้นร่วมด้วย</div>', unsafe_allow_html=True)
+            if abs(p_diff) >= 10:
+                st.markdown(f'<div class="coach-action">⚡ <b>Propulsion Asymmetry:</b> ด้าน {"Left" if p_diff > 0 else "Right"} เป็นข้างหลักในการสร้างแรงขับเคลื่อน (Dominant Limb)</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="coach-action">✅ <b>Symmetry Verified:</b> แรงส่งทั้งสองข้างสมดุลดี ใช้เป็น Baseline อ้างอิงได้</div>', unsafe_allow_html=True)
+
+    # -------------------------------------------------------------
+    # 4. Phase Boundary Timeline Controls
+    # -------------------------------------------------------------
     st.markdown("##### 🎚️ Phase Boundary Timeline Controls")
     c1, c2, c3, c4, c5 = st.columns(5)
-
     with c1:
-        v1_min = t_min
-        v1_max = max(v1_min + dt_val, t_braking - dt_val)
-        val_1 = max(v1_min, min(st.session_state.t_start, v1_max))
-        new_start = st.slider("1. Start Onset (s)", min_value=v1_min, max_value=v1_max, value=val_1, step=dt_val, format="%.3f", key="slide_1")
-
+        v1_min, v1_max = t_min, max(t_min + dt_val, t_braking - dt_val)
+        new_start = st.slider("1. Start Onset (s)", min_value=v1_min, max_value=v1_max, value=max(v1_min, min(st.session_state.t_start, v1_max)), step=dt_val, format="%.3f", key="s_1")
     with c2:
-        v2_min = max(t_min + dt_val, new_start + dt_val)
-        v2_max = max(v2_min + dt_val, t_split - dt_val)
-        val_2 = max(v2_min, min(st.session_state.t_braking, v2_max))
-        new_braking = st.slider("2. Braking (s)", min_value=v2_min, max_value=v2_max, value=val_2, step=dt_val, format="%.3f", key="slide_2")
-
+        v2_min, v2_max = max(t_min + dt_val, new_start + dt_val), max(t_min + 2*dt_val, t_split - dt_val)
+        new_braking = st.slider("2. Braking (s)", min_value=v2_min, max_value=v2_max, value=max(v2_min, min(st.session_state.t_braking, v2_max)), step=dt_val, format="%.3f", key="s_2")
     with c3:
-        v3_min = max(t_min + 2 * dt_val, new_braking + dt_val)
-        v3_max = max(v3_min + dt_val, t_takeoff - dt_val)
-        val_3 = max(v3_min, min(st.session_state.t_split, v3_max))
-        new_split = st.slider("3. Propulsive V=0 (s)", min_value=v3_min, max_value=v3_max, value=val_3, step=dt_val, format="%.3f", key="slide_3")
-
+        v3_min, v3_max = max(t_min + 2*dt_val, new_braking + dt_val), max(t_min + 3*dt_val, t_takeoff - dt_val)
+        new_split = st.slider("3. Propulsive V=0 (s)", min_value=v3_min, max_value=v3_max, value=max(v3_min, min(st.session_state.t_split, v3_max)), step=dt_val, format="%.3f", key="s_3")
     with c4:
-        v4_min = max(t_min + 3 * dt_val, new_split + dt_val)
-        v4_max = max(v4_min + dt_val, t_landing - dt_val)
-        val_4 = max(v4_min, min(st.session_state.t_takeoff, v4_max))
-        new_takeoff = st.slider("4. Take-off (s)", min_value=v4_min, max_value=v4_max, value=val_4, step=dt_val, format="%.3f", key="slide_4")
-
+        v4_min, v4_max = max(t_min + 3*dt_val, new_split + dt_val), max(t_min + 4*dt_val, t_landing - dt_val)
+        new_takeoff = st.slider("4. Take-off (s)", min_value=v4_min, max_value=v4_max, value=max(v4_min, min(st.session_state.t_takeoff, v4_max)), step=dt_val, format="%.3f", key="s_4")
     with c5:
-        v5_min = max(t_min + 4 * dt_val, new_takeoff + dt_val)
-        v5_max = max(v5_min + dt_val, t_max)
-        val_5 = max(v5_min, min(st.session_state.t_landing, v5_max))
-        new_landing = st.slider("5. Landing (s)", min_value=v5_min, max_value=v5_max, value=val_5, step=dt_val, format="%.3f", key="slide_5")
+        v5_min, v5_max = max(t_min + 4*dt_val, new_takeoff + dt_val), t_max
+        new_landing = st.slider("5. Landing (s)", min_value=v5_min, max_value=v5_max, value=max(v5_min, min(st.session_state.t_landing, v5_max)), step=dt_val, format="%.3f", key="s_5")
 
     if (new_start, new_braking, new_split, new_takeoff, new_landing) != (t_start, t_braking, t_split, t_takeoff, t_landing):
         st.session_state.t_start = new_start
@@ -417,7 +503,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
         st.session_state.t_landing = new_landing
         st.rerun()
 
-    col_btn1, col_btn2 = st.columns([1, 4])
+    col_btn1, _ = st.columns([1, 4])
     with col_btn1:
         if not st.session_state.get("is_confirmed", False):
             if st.button("✅ Confirm Phases & Crop Graph", type="primary"):
@@ -428,20 +514,161 @@ if t is not None and f_total is not None and len(f_total) > 0:
                 st.session_state.is_confirmed = False
                 st.rerun()
 
-    pdf_bytes = generate_pdf_report(
-        report, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing,
-        threshold_alert=threshold_alert, crop_x_min=crop_x_min, crop_x_max=crop_x_max,
-        theme=app_theme
-    )
-    st.sidebar.markdown("---")
-    st.sidebar.download_button(
-        label="📥 Download A4 PDF Report",
-        data=pdf_bytes,
-        file_name="Prima_Motion_CMJ_Report.pdf",
-        mime="application/pdf"
-    )
+    # -------------------------------------------------------------
+    # 5. Advanced Clinical & Research Modules (Coach Theme)
+    # -------------------------------------------------------------
+    if "Coach" in app_theme:
+        st.markdown("---")
+        
+        # Row 1: QC Checks & Timing Strategy
+        r1_c1, r1_c2 = st.columns(2)
+        with r1_c1:
+            st.markdown("### 🛡️ Data Quality Checks")
+            cv_val = (bw_sd / bw) * 100.0
+            jh_diff_pct = abs(jh_flt_val - jh_imp_val) / max(jh_imp_val, 1e-6) * 100.0
+            qc_pass = (cv_val < 2.0) and (jh_diff_pct < 10.0)
+            
+            if qc_pass:
+                st.markdown('<div class="qc-banner-pass">QUALITY STATUS: PASS</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="qc-banner-review">QUALITY STATUS: REVIEW / CHECK BASELINE</div>', unsafe_allow_html=True)
+            
+            qc_df = pd.DataFrame([
+                {"Check Item": "Sampling Rate", "Value": f"{fs:.0f} Hz", "Status": "Valid"},
+                {"Check Item": "Quiet-standing CV", "Value": f"{cv_val:.2f}% (SD {bw_sd:.1f} N)", "Status": "Good" if cv_val < 1.0 else "Review"},
+                {"Check Item": "JH Method Disagreement", "Value": f"{abs(jh_flt_val - jh_imp_val):.2f} cm ({jh_diff_pct:.1f}%)", "Status": "Good" if jh_diff_pct < 5.0 else "Review"},
+                {"Check Item": "Flight Zero-Offset Subtraction", "Value": f"L {offset_l:.1f} N | R {offset_r:.1f} N", "Status": "Corrected"}
+            ])
+            st.dataframe(qc_df, hide_index=True, width="stretch")
 
-    # 3. L/R ASYMMETRY % GRAPH
+        with r1_c2:
+            st.markdown("### ⏱️ Timing & Strategy")
+            strat_df = pd.DataFrame([
+                {"Strategy Metric": "Body Mass", "Value": f"{mass:.1f} kg"},
+                {"Strategy Metric": "Time to Take-off (Contraction Time)", "Value": f"{ttt_val*1000:.0f} ms"},
+                {"Strategy Metric": "Unweighting Duration", "Value": f"{(t_braking - t_start)*1000:.0f} ms"},
+                {"Strategy Metric": "Braking Phase Duration", "Value": f"{(t_split - t_braking)*1000:.0f} ms"},
+                {"Strategy Metric": "Propulsive Phase Duration", "Value": f"{(t_takeoff - t_split)*1000:.0f} ms"},
+                {"Strategy Metric": "Flight Phase Duration", "Value": f"{flight_dur*1000:.0f} ms"},
+                {"Strategy Metric": "Countermovement Dip Depth", "Value": f"{com_depth:.1f} cm"}
+            ])
+            st.dataframe(strat_df, hide_index=True, width="stretch")
+
+        # Row 2: Braking / Propulsion Table
+        st.markdown("### ⚖️ Braking & Propulsion — Left vs Right")
+        bp_rows = [
+            {"Phase": "Braking", "Metric": "Peak Force", "Left": f"{pk_br_l:.0f} N", "Right": f"{pk_br_r:.0f} N", "Asymmetry": asym_badge(pk_br_l, pk_br_r)[0]},
+            {"Phase": "Braking", "Metric": "Net Impulse", "Left": f"{br_net_l:.1f} N·s", "Right": f"{br_net_r:.1f} N·s", "Asymmetry": asym_badge(br_net_l, br_net_r)[0]},
+            {"Phase": "Braking", "Metric": "Gross Impulse", "Left": f"{br_gross_l:.1f} N·s", "Right": f"{br_gross_r:.1f} N·s", "Asymmetry": asym_badge(br_gross_l, br_gross_r)[0]},
+            {"Phase": "Propulsion", "Metric": "Peak Force", "Left": f"{pk_pr_l:.0f} N", "Right": f"{pk_pr_r:.0f} N", "Asymmetry": asym_badge(pk_pr_l, pk_pr_r)[0]},
+            {"Phase": "Propulsion", "Metric": "Net Impulse", "Left": f"{pr_net_l:.1f} N·s", "Right": f"{pr_net_r:.1f} N·s", "Asymmetry": asym_badge(pr_net_l, pr_net_r)[0]},
+            {"Phase": "Propulsion", "Metric": "Gross Impulse", "Left": f"{pr_gross_l:.1f} N·s", "Right": f"{pr_gross_r:.1f} N·s", "Asymmetry": asym_badge(pr_gross_l, pr_gross_r)[0]}
+        ]
+        st.dataframe(pd.DataFrame(bp_rows), hide_index=True, width="stretch")
+
+        # Row 3: Sub-charts (Velocity & Power)
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            fig_v = go.Figure()
+            fig_v.add_trace(go.Scatter(x=t[sIdx:lIdx+1], y=vel_total[sIdx:lIdx+1], line=dict(color="#11395f", width=1.5), name="COM Velocity"))
+            fig_v.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
+            fig_v.update_layout(title="COM Velocity Curve (m/s)", height=260, margin=dict(l=30, r=30, t=40, b=20))
+            st.plotly_chart(fig_v, width="stretch")
+        with rc2:
+            fig_p = go.Figure()
+            fig_p.add_trace(go.Scatter(x=t[sIdx:tIdx+1], y=power_wkg[sIdx:tIdx+1], line=dict(color="#ed7d31", width=1.5), name="COM Power"))
+            fig_p.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
+            fig_p.update_layout(title="COM Specific Power (W/kg)", height=260, margin=dict(l=30, r=30, t=40, b=20))
+            st.plotly_chart(fig_p, width="stretch")
+
+        # Row 4: Landing & Total Landing Load
+        rl1, rl2 = st.columns(2)
+        with rl1:
+            st.markdown("### 🛬 Landing — Left vs Right")
+            land_rows = [
+                {"Metric": "Peak Landing Force", "Left": f"{pk_land_l:.0f} N", "Right": f"{pk_land_r:.0f} N", "Asymmetry": asym_badge(pk_land_l, pk_land_r)[0]},
+                {"Metric": "Landing Impulse (0–250 ms)", "Left": f"{land_imp_250_l:.1f} N·s", "Right": f"{land_imp_250_r:.1f} N·s", "Asymmetry": asym_badge(land_imp_250_l, land_imp_250_r)[0]}
+            ]
+            st.dataframe(pd.DataFrame(land_rows), hide_index=True, width="stretch")
+        with rl2:
+            st.markdown("### 💥 Total Landing Load")
+            tot_land_df = pd.DataFrame([
+                {"Metric": "Peak Landing Force", "Value": f"{pk_land_tot:.0f} N ({pk_land_tot/bw:.2f} ×BW)"},
+                {"Metric": "20–80% Loading Rate", "Value": f"{load_rate:.0f} N/s ({load_rate/bw:.1f} BW/s)"},
+                {"Metric": "Landing Impulse (0–250 ms)", "Value": f"{land_imp_250_tot:.1f} N·s"},
+                {"Metric": "Time to Peak Landing Force", "Value": f"{ttp_land_ms:.1f} ms"}
+            ])
+            st.dataframe(tot_land_df, hide_index=True, width="stretch")
+
+        # Row 5: Research Derived Metrics & Clinical Limb Mapping
+        rr1, rr2 = st.columns(2)
+        with rr1:
+            st.markdown("### 🔬 Research-grade Derived Metrics")
+            mean_br_f = np.mean(sf[bIdx:zIdx+1]) if zIdx > bIdx else 0.0
+            mean_pr_f = np.mean(sf[zIdx:tIdx+1]) if tIdx > zIdx else 0.0
+            mean_br_p = np.mean(power_wkg[bIdx:zIdx+1]) if zIdx > bIdx else 0.0
+            mean_pr_p = np.mean(power_wkg[zIdx:tIdx+1]) if tIdx > zIdx else 0.0
+            pos_net_imp = float(np.trapezoid(np.maximum(0, sf[sIdx:tIdx+1] - bw), dx=dt_val))
+            leg_stiff = (pk_br_l + pk_br_r) / (com_depth / 100.0) if com_depth > 0 else 0.0
+
+            res_df = pd.DataFrame([
+                {"Research Metric": "Mean Braking Force", "Value": f"{mean_br_f/mass:.2f} N/kg ({mean_br_f:.0f} N)"},
+                {"Research Metric": "Mean Propulsive Force", "Value": f"{mean_pr_f/mass:.2f} N/kg ({mean_pr_f:.0f} N)"},
+                {"Research Metric": "Mean Braking Power", "Value": f"{abs(mean_br_p):.2f} W/kg"},
+                {"Research Metric": "Mean Propulsive Power", "Value": f"{mean_pr_p:.2f} W/kg"},
+                {"Research Metric": "Positive Net Impulse", "Value": f"{pos_net_imp/mass:.3f} N·s/kg ({pos_net_imp:.1f} N·s)"},
+                {"Research Metric": "Leg Stiffness (Exploratory)", "Value": f"{leg_stiff/mass:.1f} N/m/kg"}
+            ])
+            st.dataframe(res_df, hide_index=True, width="stretch")
+
+        with rr2:
+            st.markdown("### 🏥 Clinical Change & Limb Mapping")
+            if involved_limb != "None / Athlete":
+                inv_side = involved_limb
+                uninv_side = "Right" if inv_side == "Left" else "Left"
+                inv_p = pr_net_l if inv_side == "Left" else pr_net_r
+                uninv_p = pr_net_r if inv_side == "Left" else pr_net_l
+                p_def = ((inv_p - uninv_p) / abs(uninv_p)) * 100.0 if uninv_p != 0 else 0.0
+                
+                inv_l = pk_land_l if inv_side == "Left" else pk_land_r
+                uninv_l = pk_land_r if inv_side == "Left" else pk_land_l
+                l_def = ((inv_l - uninv_l) / abs(uninv_l)) * 100.0 if uninv_l != 0 else 0.0
+                
+                inv_p_str = f"{p_def:+.1f}%"
+                inv_l_str = f"{l_def:+.1f}%"
+            else:
+                inv_p_str = "Select involved limb"
+                inv_l_str = "Select involved limb"
+
+            if baseline_jh > 0:
+                ch_pct = ((jh_imp_val - baseline_jh) / baseline_jh) * 100.0
+                ch_str = f"{ch_pct:+.1f}%"
+                mdc_str = f"YES — exceeds {mdc_pct:.1f}%" if abs(ch_pct) >= mdc_pct else f"NO — within {mdc_pct:.1f}%"
+            else:
+                ch_str = "No baseline entered"
+                mdc_str = "—"
+
+            clin_df = pd.DataFrame([
+                {"Clinical Variable": "Involved Propulsion Net Impulse Deficit", "Value": inv_p_str},
+                {"Clinical Variable": "Involved Landing Peak Difference", "Value": inv_l_str},
+                {"Clinical Variable": "Change from Baseline JH", "Value": ch_str},
+                {"Clinical Variable": "Exceeds entered MDC?", "Value": mdc_str}
+            ])
+            st.dataframe(clin_df, hide_index=True, width="stretch")
+
+        # Row 6: Interpretation for Coach
+        st.markdown("### 💡 Interpretation for Coach")
+        st.markdown(f"""
+            * **Performance:** Jump Height จาก Impulse-Momentum = **{jh_imp_val:.1f} cm** (Flight Time = **{jh_flt_val:.1f} cm**), Time-to-takeoff = **{ttt_val*1000:.0f} ms**, RSImod = **{rsi_val:.2f}**
+            * **Braking Strategy:** Net Impulse Asymmetry = **{asym_badge(br_net_l, br_net_r)[0]}** (สะท้อนการเปลี่ยนโมเมนตัมช่วงย่อตัว)
+            * **Propulsion Strategy:** Net Impulse Asymmetry = **{asym_badge(pr_net_l, pr_net_r)[0]}** (แนะนำให้ดูควบคู่กับ Peak Force และ RFD)
+            * **Landing Strategy:** Peak Landing Force Asymmetry = **{asym_badge(pk_land_l, pk_land_r)[0]}**, Loading Rate = **{load_rate/bw:.1f} BW/s**
+        """)
+
+    # -------------------------------------------------------------
+    # 6. Asymmetry % Profile Graph
+    # -------------------------------------------------------------
+    st.markdown("---")
     max_sl_sr = np.maximum(sl, sr)
     deficits = np.where((sf >= 50) & (max_sl_sr > 0), ((sl - sr) / np.maximum(max_sl_sr, 1e-6)) * 100, 0)
     fig_deficit = go.Figure()
@@ -462,30 +689,26 @@ if t is not None and f_total is not None and len(f_total) > 0:
     fig_deficit.add_hrect(y0=-threshold_alert, y1=threshold_alert, fillcolor="rgba(34, 197, 94, 0.15)", line_width=0)
 
     fig_deficit.add_annotation(
-        xref="paper", yref="y", x=0.01, y=38,
-        text="<b>← Left Dominant (L > R)</b>", showarrow=False,
-        font=dict(size=11, color=col_l_hex),
-        bgcolor="rgba(255, 255, 255, 0.8)", bordercolor=col_l_hex, borderwidth=1
+        xref="paper", yref="y", x=0.01, y=38, text="<b>← Left Dominant (L > R)</b>", showarrow=False,
+        font=dict(size=11, color=col_l_hex), bgcolor="rgba(255, 255, 255, 0.8)", bordercolor=col_l_hex, borderwidth=1
     )
-
     fig_deficit.add_annotation(
-        xref="paper", yref="y", x=0.01, y=-38,
-        text="<b>← Right Dominant (R > L)</b>", showarrow=False,
-        font=dict(size=11, color=col_r_hex),
-        bgcolor="rgba(255, 255, 255, 0.8)", bordercolor=col_r_hex, borderwidth=1
+        xref="paper", yref="y", x=0.01, y=-38, text="<b>← Right Dominant (R > L)</b>", showarrow=False,
+        font=dict(size=11, color=col_r_hex), bgcolor="rgba(255, 255, 255, 0.8)", bordercolor=col_r_hex, borderwidth=1
     )
 
     fig_deficit.update_layout(
-        title="L/R ASYMMETRY % (Threshold Alert & Limb Dominance)", 
+        title="L/R ASYMMETRY % PROFILE (Threshold Alert & Limb Dominance)", 
         xaxis_title="Time (s)", yaxis_title="Deficit %", 
-        yaxis_range=[-55, 55], height=360,
-        margin=dict(l=40, r=40, t=50, b=20)
+        yaxis_range=[-55, 55], height=340, margin=dict(l=40, r=40, t=50, b=20)
     )
     fig_deficit.update_xaxes(range=[display_x_min, display_x_max])
     st.plotly_chart(fig_deficit, width="stretch")
 
-    # 4. REPORT TABLE
-    st.markdown(f"### 📋 Biomechanical Analysis Report ({'Movement Sub-phases' if group_mode_param=='phase' else 'Anicic et al., 2023'})")
+    # -------------------------------------------------------------
+    # 7. Standard Report Table & PDF Export
+    # -------------------------------------------------------------
+    st.markdown(f"### 📋 Full Biomechanical Report ({'Movement Sub-phases' if group_mode_param=='phase' else 'Anicic et al., 2023'})")
     table_rows = []
     for phase_name, metrics in report.items():
         table_rows.append({"Biomechanical Metric": f"=== {phase_name.upper()} ===", "Left": "", "Right": "", "TOTAL": "", "Deficit %": ""})
@@ -500,6 +723,11 @@ if t is not None and f_total is not None and len(f_total) > 0:
     
     st.dataframe(pd.DataFrame(table_rows), width="stretch", hide_index=True)
 
+    pdf_bytes = generate_pdf_report(
+        report, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing,
+        threshold_alert=threshold_alert, crop_x_min=crop_x_min, crop_x_max=crop_x_max,
+        theme=app_theme
+    )
     st.download_button(
         label="📥 Download A4 PDF Report",
         data=pdf_bytes,
