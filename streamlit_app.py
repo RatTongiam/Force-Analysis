@@ -145,9 +145,11 @@ if t is not None and f_total is not None and len(f_total) > 0:
     n_samples = len(f_total)
     quiet_samples = max(1, min(int(0.5 / dt_val), n_samples))
 
-    # Phase detection บน RAW Data ชดเชย Flight Drift
+    # Phase detection
     sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto, lIdx_l, lIdx_r, offsets = detect_phases_sequential(
-        t, f_left, f_right, dt_val, quiet_samples=quiet_samples, filter_type=filter_type, cutoff=cutoff_freq
+        t, f_total, dt_val, quiet_samples=quiet_samples, 
+        filter_type=filter_type, cutoff=cutoff_freq, 
+        sl_raw=f_left, sr_raw=f_right
     )
 
     offset_l, offset_r = offsets
@@ -155,7 +157,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
     f_right_zeroed = np.maximum(0.0, f_right - offset_r)
     f_total_zeroed = f_left_zeroed + f_right_zeroed
 
-    # กรองสัญญาณหลัง Zero Baseline Drift เพื่อพล็อต
     sf = apply_signal_filter(f_total_zeroed, filter_type=filter_type, cutoff=cutoff_freq, fs=fs, window_size=filter_size)
     sl = apply_signal_filter(f_left_zeroed, filter_type=filter_type, cutoff=cutoff_freq, fs=fs, window_size=filter_size)
     sr = apply_signal_filter(f_right_zeroed, filter_type=filter_type, cutoff=cutoff_freq, fs=fs, window_size=filter_size)
