@@ -87,7 +87,10 @@ def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeo
 
 def create_mini_series_image(t, data, title, ylabel, color='#11395f'):
     fig, ax = plt.subplots(figsize=(4.8, 1.8), dpi=300)
-    ax.plot(t, data, color=color, linewidth=1.0)
+    if len(t) == len(data) and len(t) > 0:
+        ax.plot(t, data, color=color, linewidth=1.0)
+    else:
+        ax.plot([0, 1], [0, 0], color=color, linewidth=1.0)
     ax.axhline(y=0, color='#94a3b8', linestyle='--', linewidth=0.6)
     ax.set_ylabel(ylabel, fontsize=8)
     ax.set_title(title, fontsize=9, fontweight='bold', color='#1e293b', pad=4)
@@ -203,41 +206,41 @@ def build_classic_pdf(doc, report, t, sf, sl, sr, t_start, t_braking, t_split, t
 def build_modern_coach_pdf(doc, report, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing, threshold_alert, crop_x_min, crop_x_max, coach_context):
     styles = getSampleStyleSheet()
     
-    title_style = ParagraphStyle('HeadTitle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=14, leading=16, textColor=colors.HexColor('#ffffff'))
-    sub_style = ParagraphStyle('HeadSub', parent=styles['Normal'], fontName='Helvetica', fontSize=8, leading=10, textColor=colors.HexColor('#dce8f5'))
+    title_style = ParagraphStyle('HeadTitle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=13, leading=15, textColor=colors.HexColor('#ffffff'))
+    sub_style = ParagraphStyle('HeadSub', parent=styles['Normal'], fontName='Helvetica', fontSize=7.5, leading=9.5, textColor=colors.HexColor('#dce8f5'))
     
     kpi_sub_style = ParagraphStyle('KPISub', fontName='Helvetica', fontSize=6.5, leading=8, textColor=colors.HexColor('#64748b'), alignment=1)
-    kpi_val_style = ParagraphStyle('KPIVal', fontName='Helvetica-Bold', fontSize=14, leading=16, textColor=colors.HexColor('#11395f'), alignment=1)
+    kpi_val_style = ParagraphStyle('KPIVal', fontName='Helvetica-Bold', fontSize=13, leading=15, textColor=colors.HexColor('#11395f'), alignment=1)
     
-    card_h2 = ParagraphStyle('CardH2', fontName='Helvetica-Bold', fontSize=9.5, leading=11, textColor=colors.HexColor('#11395f'))
-    cell_lbl = ParagraphStyle('CellLbl', fontName='Helvetica', fontSize=7.0, leading=8.5, textColor=colors.HexColor('#334155'))
-    cell_val = ParagraphStyle('CellVal', fontName='Helvetica-Bold', fontSize=7.0, leading=8.5, textColor=colors.HexColor('#0f172a'), alignment=2)
-    th_style = ParagraphStyle('THStyle', fontName='Helvetica-Bold', fontSize=7.0, leading=8.5, textColor=colors.HexColor('#475467'))
+    card_h2 = ParagraphStyle('CardH2', fontName='Helvetica-Bold', fontSize=9.0, leading=11, textColor=colors.HexColor('#11395f'))
+    cell_lbl = ParagraphStyle('CellLbl', fontName='Helvetica', fontSize=6.8, leading=8.5, textColor=colors.HexColor('#334155'))
+    cell_val = ParagraphStyle('CellVal', fontName='Helvetica-Bold', fontSize=6.8, leading=8.5, textColor=colors.HexColor('#0f172a'), alignment=2)
+    th_style = ParagraphStyle('THStyle', fontName='Helvetica-Bold', fontSize=6.8, leading=8.5, textColor=colors.HexColor('#475467'))
 
     story = []
 
     # 1. Header Banner
     header_data = [[
-        Paragraph("<b>CMJ Coach Analyzer v4 Multi-Report — Research & Clinical</b>", title_style)
+        Paragraph("<b>CMJ Coach Analyzer v4 Multi-Report — Research &amp; Clinical</b>", title_style)
     ], [
-        Paragraph("QTM / Bertec / VALD • validated impulse-momentum workflow • Left–Right braking, propulsion & landing analysis", sub_style)
+        Paragraph("QTM / Bertec / VALD • Validated Impulse-Momentum Workflow • Bilateral Asymmetry Engine", sub_style)
     ]]
     head_table = Table(header_data, colWidths=[792])
     head_table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#0d3154')),
-        ('TOPPADDING', (0, 0), (-1, -1), 5),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-        ('LEFTPADDING', (0, 0), (-1, -1), 10),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
     ]))
     story.append(head_table)
     story.append(Spacer(1, 4))
 
     # 2. 4 KPI Scorecards
-    jh_imp = coach_context.get("jh_imp", "36.1")
-    jh_flt = coach_context.get("jh_flt", "35.4")
-    rsi_val = coach_context.get("rsi", "0.41")
-    ppk_val = coach_context.get("ppk", "48.1")
+    jh_imp = str(coach_context.get("jh_imp", "36.1"))
+    jh_flt = str(coach_context.get("jh_flt", "35.4"))
+    rsi_val = str(coach_context.get("rsi", "0.41"))
+    ppk_val = str(coach_context.get("ppk", "48.1"))
     
     kpi_data = [
         [
@@ -270,13 +273,13 @@ def build_modern_coach_pdf(doc, report, t, sf, sl, sr, t_start, t_braking, t_spl
     story.append(kpi_table)
     story.append(Spacer(1, 4))
 
-    # 3. Main Section: Graph (520 pt) + Coach Snapshot (265 pt)
+    # 3. Upper Grid: Graph (520 pt) + Snapshot (272 pt)
     force_chart_buf = create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing, crop_x_min, crop_x_max, is_coach=True)
     
-    coach_headline = coach_context.get("headline", "การแบ่งแรงซ้าย–ขวาช่วง propulsion อยู่ในช่วงค่อนข้างสมดุลของ trial นี้")
-    coach_sub = coach_context.get("sub", f"JH {jh_imp} cm • RSImod {rsi_val} m/s • Propulsion net impulse asymmetry 6.1% • Landing peak asymmetry 6.5%.")
-    coach_act1 = coach_context.get("act1", "Propulsion net impulse สมดุลใน trial นี้ใช้เป็น baseline เพื่อติดตาม fatigue / RTP ได้")
-    coach_act2 = coach_context.get("act2", "ใช้ค่าเฉลี่ย 3–5 valid trials และ CV% ก่อนสรุป pattern ระยะยาว")
+    coach_headline = str(coach_context.get("headline", "Bilateral propulsion impulse balanced within trial."))
+    coach_sub = str(coach_context.get("sub", f"JH {jh_imp} cm • RSImod {rsi_val} m/s"))
+    coach_act1 = str(coach_context.get("act1", "Propulsion net impulse is balanced in this trial; use as baseline."))
+    coach_act2 = str(coach_context.get("act2", "Use average of 3-5 valid trials and CV% before concluding pattern."))
 
     snapshot_cell = [
         Paragraph("<b>Coach snapshot</b>", card_h2),
@@ -291,7 +294,7 @@ def build_modern_coach_pdf(doc, report, t, sf, sl, sr, t_start, t_braking, t_spl
     ]
 
     upper_grid = [[
-        RLImage(force_chart_buf, width=515, height=140),
+        RLImage(force_chart_buf, width=515, height=135),
         snapshot_cell
     ]]
     upper_table = Table(upper_grid, colWidths=[520, 272])
@@ -299,25 +302,25 @@ def build_modern_coach_pdf(doc, report, t, sf, sl, sr, t_start, t_braking, t_spl
         ('BACKGROUND', (1, 0), (1, 0), colors.HexColor('#f8fafc')),
         ('BOX', (1, 0), (1, 0), 0.5, colors.HexColor('#cbd5e1')),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('TOPPADDING', (1, 0), (1, 0), 6),
-        ('LEFTPADDING', (1, 0), (1, 0), 8),
-        ('RIGHTPADDING', (1, 0), (1, 0), 8),
-        ('BOTTOMPADDING', (1, 0), (1, 0), 6),
+        ('TOPPADDING', (1, 0), (1, 0), 5),
+        ('LEFTPADDING', (1, 0), (1, 0), 7),
+        ('RIGHTPADDING', (1, 0), (1, 0), 7),
+        ('BOTTOMPADDING', (1, 0), (1, 0), 5),
     ]))
     story.append(upper_table)
     story.append(Spacer(1, 4))
 
-    # 4. Middle Section: Braking & Propulsion Table (Full Width 792 pt)
+    # 4. Middle Grid: Braking & Propulsion Table (792 pt)
     bp_data = [
         [Paragraph("<b>Metric</b>", th_style), Paragraph("<b>Left</b>", th_style), Paragraph("<b>Right</b>", th_style), Paragraph("<b>Directional asymmetry</b>", th_style)],
         [Paragraph("<b>Braking phase</b>", ParagraphStyle('BPP', fontName='Helvetica-Bold', fontSize=7.0, textColor=colors.HexColor('#11395f'))), "", "", ""],
-        [Paragraph("Peak force", cell_lbl), Paragraph(f"{coach_context.get('pk_br_l', '-')} N", cell_val), Paragraph(f"{coach_context.get('pk_br_r', '-')} N", cell_val), Paragraph(coach_context.get('asym_pk_br', '-'), cell_val)],
-        [Paragraph("NET impulse", cell_lbl), Paragraph(f"{coach_context.get('br_net_l', '-')} N·s", cell_val), Paragraph(f"{coach_context.get('br_net_r', '-')} N·s", cell_val), Paragraph(coach_context.get('asym_br_net', '-'), cell_val)],
-        [Paragraph("Gross GRF impulse", cell_lbl), Paragraph(f"{coach_context.get('br_gross_l', '-')} N·s", cell_val), Paragraph(f"{coach_context.get('br_gross_r', '-')} N·s", cell_val), Paragraph(coach_context.get('asym_br_gross', '-'), cell_val)],
+        [Paragraph("Peak force", cell_lbl), Paragraph(f"{coach_context.get('pk_br_l', '-')} N", cell_val), Paragraph(f"{coach_context.get('pk_br_r', '-')} N", cell_val), Paragraph(str(coach_context.get('asym_pk_br', '-')), cell_val)],
+        [Paragraph("NET impulse", cell_lbl), Paragraph(f"{coach_context.get('br_net_l', '-')} N·s", cell_val), Paragraph(f"{coach_context.get('br_net_r', '-')} N·s", cell_val), Paragraph(str(coach_context.get('asym_br_net', '-')), cell_val)],
+        [Paragraph("Gross GRF impulse", cell_lbl), Paragraph(f"{coach_context.get('br_gross_l', '-')} N·s", cell_val), Paragraph(f"{coach_context.get('br_gross_r', '-')} N·s", cell_val), Paragraph(str(coach_context.get('asym_br_gross', '-')), cell_val)],
         [Paragraph("<b>Propulsion / explosive phase</b>", ParagraphStyle('BPP2', fontName='Helvetica-Bold', fontSize=7.0, textColor=colors.HexColor('#11395f'))), "", "", ""],
-        [Paragraph("Peak force", cell_lbl), Paragraph(f"{coach_context.get('pk_pr_l', '-')} N", cell_val), Paragraph(f"{coach_context.get('pk_pr_r', '-')} N", cell_val), Paragraph(coach_context.get('asym_pk_pr', '-'), cell_val)],
-        [Paragraph("NET impulse", cell_lbl), Paragraph(f"{coach_context.get('pr_net_l', '-')} N·s", cell_val), Paragraph(f"{coach_context.get('pr_net_r', '-')} N·s", cell_val), Paragraph(coach_context.get('asym_pr_net', '-'), cell_val)],
-        [Paragraph("Gross GRF impulse", cell_lbl), Paragraph(f"{coach_context.get('pr_gross_l', '-')} N·s", cell_val), Paragraph(f"{coach_context.get('pr_gross_r', '-')} N·s", cell_val), Paragraph(coach_context.get('asym_pr_gross', '-'), cell_val)],
+        [Paragraph("Peak force", cell_lbl), Paragraph(f"{coach_context.get('pk_pr_l', '-')} N", cell_val), Paragraph(f"{coach_context.get('pk_pr_r', '-')} N", cell_val), Paragraph(str(coach_context.get('asym_pk_pr', '-')), cell_val)],
+        [Paragraph("NET impulse", cell_lbl), Paragraph(f"{coach_context.get('pr_net_l', '-')} N·s", cell_val), Paragraph(f"{coach_context.get('pr_net_r', '-')} N·s", cell_val), Paragraph(str(coach_context.get('asym_pr_net', '-')), cell_val)],
+        [Paragraph("Gross GRF impulse", cell_lbl), Paragraph(f"{coach_context.get('pr_gross_l', '-')} N·s", cell_val), Paragraph(f"{coach_context.get('pr_gross_r', '-')} N·s", cell_val), Paragraph(str(coach_context.get('asym_pr_gross', '-')), cell_val)],
     ]
     bp_table = Table(bp_data, colWidths=[270, 160, 160, 202])
     bp_table.setStyle(TableStyle([
@@ -332,38 +335,52 @@ def build_modern_coach_pdf(doc, report, t, sf, sl, sr, t_start, t_braking, t_spl
     story.append(bp_table)
     story.append(Spacer(1, 4))
 
-    # 5. Page Break for Clinical & QC Cards (Page 2)
+    # 5. Page Break for Page 2
     story.append(PageBreak())
 
-    # Page 2: QC, Timing, Sub-charts, Landing & Clinical
-    # Header Mini
-    story.append(Paragraph("<b>CMJ Coach Analyzer v4 — Clinical & Data Quality Details (Page 2)</b>", ParagraphStyle('P2H', fontName='Helvetica-Bold', fontSize=10, textColor=colors.HexColor('#0d3154'))))
+    # Page 2: QC, Timing, Mini Charts & Clinical
+    story.append(Paragraph("<b>CMJ Coach Analyzer v4 — Clinical &amp; Data Quality Details (Page 2)</b>", ParagraphStyle('P2H', fontName='Helvetica-Bold', fontSize=10, textColor=colors.HexColor('#0d3154'))))
     story.append(Spacer(1, 4))
 
-    # QC + Timing Section
-    qc_rows = [
-        [Paragraph("<b>Data quality checks</b>", card_h2), Paragraph("<b>Timing & strategy</b>", card_h2)],
-        [
-            Paragraph(f"• Sampling: {coach_context.get('fs', '2400')} Hz<br>• Quiet-standing CV: {coach_context.get('cv', '0.26')}%<br>• Flight Residual: {coach_context.get('fres', '1.2')} N<br>• JH Agreement: {coach_context.get('jh_diff', '0.67')} cm", cell_lbl),
-            Paragraph(f"• Body mass: {coach_context.get('mass', '73.4')} kg<br>• Time to take-off: {coach_context.get('ttt', '870')} ms<br>• Braking duration: {coach_context.get('d_brk', '548')} ms<br>• Countermovement depth: {coach_context.get('depth', '38.7')} cm", cell_lbl)
-        ]
+    # QC and Timing Table (No <br> tag syntax issues)
+    qc_content = [
+        Paragraph(f"• Sampling: {coach_context.get('fs', '2400')} Hz", cell_lbl),
+        Paragraph(f"• Quiet-standing CV: {coach_context.get('cv', '0.26')}%", cell_lbl),
+        Paragraph(f"• Flight Residual: {coach_context.get('fres', '1.2')} N", cell_lbl),
+        Paragraph(f"• JH Agreement: {coach_context.get('jh_diff', '0.67')} cm", cell_lbl)
     ]
-    qc_timing_table = Table(qc_rows, colWidths=[390, 395])
+    timing_content = [
+        Paragraph(f"• Body mass: {coach_context.get('mass', '73.4')} kg", cell_lbl),
+        Paragraph(f"• Time to take-off: {coach_context.get('ttt', '870')} ms", cell_lbl),
+        Paragraph(f"• Braking duration: {coach_context.get('d_brk', '548')} ms", cell_lbl),
+        Paragraph(f"• Countermovement depth: {coach_context.get('depth', '38.7')} cm", cell_lbl)
+    ]
+
+    qc_timing_grid = [
+        [Paragraph("<b>Data quality checks</b>", card_h2), Paragraph("<b>Timing &amp; strategy</b>", card_h2)],
+        [qc_content, timing_content]
+    ]
+    qc_timing_table = Table(qc_timing_grid, colWidths=[390, 395])
     qc_timing_table.setStyle(TableStyle([
         ('BOX', (0, 0), (0, -1), 0.5, colors.HexColor('#cbd5e1')),
         ('BOX', (1, 0), (1, -1), 0.5, colors.HexColor('#cbd5e1')),
         ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#ffffff')),
-        ('TOPPADDING', (0, 0), (-1, -1), 4),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
         ('LEFTPADDING', (0, 0), (-1, -1), 6),
         ('RIGHTPADDING', (0, 0), (-1, -1), 6),
     ]))
     story.append(qc_timing_table)
     story.append(Spacer(1, 4))
 
-    # Sub-charts & Landing Section
-    vel_buf = create_mini_series_image(t, coach_context.get('vel', np.zeros(len(t))), "COM velocity", "m/s", color='#11395f')
-    pow_buf = create_mini_series_image(t, coach_context.get('power', np.zeros(len(t))), "COM power", "W/kg", color='#ed7d31')
+    # Sub-charts and Landing Load
+    vel_arr = coach_context.get('vel', np.array([]))
+    pow_arr = coach_context.get('power', np.array([]))
+    t_sub = t[:len(vel_arr)] if len(vel_arr) > 0 else np.array([])
+    t_pow = t[:len(pow_arr)] if len(pow_arr) > 0 else np.array([])
+
+    vel_buf = create_mini_series_image(t_sub, vel_arr, "COM velocity", "m/s", color='#11395f')
+    pow_buf = create_mini_series_image(t_pow, pow_arr, "COM power", "W/kg", color='#ed7d31')
 
     landing_details = [
         Paragraph("<b>Total landing load</b>", card_h2),
@@ -372,7 +389,7 @@ def build_modern_coach_pdf(doc, report, t, sf, sl, sr, t_start, t_braking, t_spl
         Paragraph(f"• 20–80% loading rate: <b>{coach_context.get('load_rate', '-')} N/s</b> ({coach_context.get('load_rate_bw', '-')} BW/s)", cell_lbl),
         Paragraph(f"• Landing impulse 0–250 ms: <b>{coach_context.get('land_imp_250', '-')} N·s</b>", cell_lbl),
         Paragraph(f"• Time to peak landing: <b>{coach_context.get('ttp_land', '-')} ms</b>", cell_lbl),
-        Spacer(1, 3),
+        Spacer(1, 2),
         Paragraph("<b>Research Derived Metrics</b>", card_h2),
         Paragraph(f"• Mean braking force: {coach_context.get('mean_br_f', '-')} N/kg", cell_lbl),
         Paragraph(f"• Leg stiffness (Exploratory): {coach_context.get('leg_stiff', '-')} N/m/kg", cell_lbl)
@@ -397,7 +414,7 @@ def build_modern_coach_pdf(doc, report, t, sf, sl, sr, t_start, t_braking, t_spl
     # Interpretation Box
     interp_box = [
         [Paragraph("<b>Interpretation for coach</b>", card_h2)],
-        [Paragraph(coach_context.get("interp_text", "Performance & Kinetic Asymmetry summary."), cell_lbl)]
+        [Paragraph(str(coach_context.get("interp_text", "Performance &amp; Kinetic Asymmetry summary.")), cell_lbl)]
     ]
     interp_table = Table(interp_box, colWidths=[792])
     interp_table.setStyle(TableStyle([
@@ -418,7 +435,6 @@ def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_ta
     pdf_buffer = io.BytesIO()
     
     if "Coach" in theme:
-        # A4 Landscape สำหรับ Modern Coach Theme
         doc = SimpleDocTemplate(
             pdf_buffer,
             pagesize=landscape(A4),
@@ -429,7 +445,6 @@ def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_ta
         )
         build_modern_coach_pdf(doc, report, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing, threshold_alert, crop_x_min, crop_x_max, coach_context or {})
     else:
-        # A4 Portrait สำหรับ Classic Purple Theme
         doc = SimpleDocTemplate(
             pdf_buffer,
             pagesize=A4,
