@@ -339,8 +339,9 @@ if t is not None and f_total is not None and len(f_total) > 0:
         lIdx_l=lIdx_l, lIdx_r=lIdx_r
     )
 
+    # ส่ง t_landing เข้าฟังก์ชัน generate_pdf_report
     pdf_bytes = generate_pdf_report(
-        report, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, 
+        report, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing,
         threshold_alert=threshold_alert, crop_x_min=crop_x_min, crop_x_max=crop_x_max
     )
     st.sidebar.markdown("---")
@@ -359,6 +360,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     fig_deficit.add_vrect(x0=t_start, x1=t_braking, fillcolor="rgba(234, 179, 8, 0.12)", line_width=0)
     fig_deficit.add_vrect(x0=t_braking, x1=t_split, fillcolor="rgba(239, 68, 68, 0.12)", line_width=0)
     fig_deficit.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="rgba(34, 197, 94, 0.12)", line_width=0)
+    fig_deficit.add_vrect(x0=t_takeoff, x1=t_landing, fillcolor="rgba(148, 163, 184, 0.12)", line_width=0)
 
     fig_deficit.add_vline(x=t_start, line_width=1.5, line_dash="dash", line_color="#ca8a04")
     fig_deficit.add_vline(x=t_braking, line_width=1.5, line_dash="dash", line_color="#ef4444")
