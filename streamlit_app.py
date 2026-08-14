@@ -15,10 +15,72 @@ from pdf_generator import generate_pdf_report
 
 st.set_page_config(layout="wide", page_title="Free JumpAnz Team - Prima Motion Tech")
 
-st.title("Free JumpAnz Team - Biomechanics Analysis")
-st.caption("PRIMA MOTION TECHNOLOGY — Technology that unlocks scientific insight")
+# -------------------------------------------------------------
+# Sidebar: Display Settings & Theme Selection
+# -------------------------------------------------------------
+st.sidebar.header("🎨 Theme & Presentation")
 
-st.sidebar.header("Data Import & Settings")
+app_theme = st.sidebar.selectbox(
+    "Select Dashboard Theme",
+    ["Modern Coach (Dashboard)", "Classic Purple (Original)"],
+    index=0
+)
+
+report_grouping = st.sidebar.radio(
+    "📊 Metric Grouping Mode",
+    ["Movement Sub-phases (Phase-by-Phase)", "Variance Explained (Anicic et al., 2023)"],
+    index=0
+)
+
+# Custom CSS Inject for Modern Coach Dashboard
+if "Coach" in app_theme:
+    col_l_hex = "#2f6fed"
+    col_r_hex = "#ed7d31"
+    col_tot_hex = "#11395f"
+    bg_banner = "linear-gradient(120deg, #0d3154, #1c507f)"
+    st.markdown(f"""
+        <style>
+        .coach-header {{
+            background: {bg_banner};
+            color: #ffffff;
+            padding: 16px 20px;
+            border-radius: 12px;
+            margin-bottom: 15px;
+        }}
+        .kpi-card {{
+            background: #ffffff;
+            border: 1px solid #e4e9f1;
+            border-radius: 12px;
+            padding: 12px 16px;
+            box-shadow: 0 2px 6px rgba(16,24,40,.04);
+            text-align: center;
+        }}
+        .kpi-metric {{ font-size: 24px; font-weight: 800; color: #11395f; margin: 4px 0; }}
+        .kpi-sub {{ font-size: 11px; color: #667085; font-weight: 600; }}
+        .coach-box {{
+            background: #f7fbff;
+            border-left: 5px solid #11395f;
+            padding: 14px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }}
+        .coach-action {{
+            background: #fff8f1;
+            border: 1px solid #f5d2b7;
+            padding: 10px 12px;
+            border-radius: 8px;
+            margin-top: 6px;
+            font-size: 13px;
+        }}
+        </style>
+    """, unsafe_allow_html=True)
+else:
+    col_l_hex = "#818cf8"
+    col_r_hex = "#f87171"
+    col_tot_hex = "#4d2994"
+
+st.sidebar.markdown("---")
+st.sidebar.header("📁 Data Import & Settings")
 
 data_mode = st.sidebar.radio("Select Input Mode", [
     "MuscleLab CSV",
@@ -48,6 +110,18 @@ else:
     filter_size = 1
 
 threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
+
+# Header Display
+if "Coach" in app_theme:
+    st.markdown("""
+        <div class="coach-header">
+            <h2 style="margin:0; font-size:24px; color:#fff;">CMJ Coach Analyzer — Research & Clinical</h2>
+            <p style="margin:4px 0 0; font-size:12px; color:#dce8f5;">Prima Motion Technology • Bilateral Asymmetry & Phase Dynamics Engine</p>
+        </div>
+    """, unsafe_allow_html=True)
+else:
+    st.title("Free JumpAnz Team - Biomechanics Analysis")
+    st.caption("PRIMA MOTION TECHNOLOGY — Technology that unlocks scientific insight")
 
 dt, t, f_left, f_right, f_total = None, None, None, None, None
 file_signature = None
@@ -145,7 +219,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     n_samples = len(f_total)
     quiet_samples = max(1, min(int(0.5 / dt_val), n_samples))
 
-    # Phase detection
+    # Phase Detection on Zero-Offset Corrected RAW Data
     sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto, lIdx_l, lIdx_r, offsets = detect_phases_sequential(
         t, f_total, dt_val, quiet_samples=quiet_samples, 
         filter_type=filter_type, cutoff=cutoff_freq, 
@@ -188,33 +262,71 @@ if t is not None and f_total is not None and len(f_total) > 0:
     t_takeoff = st.session_state.t_takeoff
     t_landing = st.session_state.t_landing
 
-    # กำหนด Padding หัวท้ายแบบ Dynamic 20% ของระยะเวลาการเคลื่อนไหวรวม
+    # Dynamic 20% Crop Padding
     total_duration = max(dt_val, t_landing - t_start)
     pad_time = 0.20 * total_duration
 
     crop_x_min = max(t_min, t_start - pad_time)
     crop_x_max = min(t_max, t_landing + pad_time)
 
-    if not st.session_state.get("is_confirmed", False):
-        display_x_min = t_min
-        display_x_max = t_max
-    else:
-        display_x_min = crop_x_min
-        display_x_max = crop_x_max
+    display_x_min = crop_x_min if st.session_state.get("is_confirmed", False) else t_min
+    display_x_max = crop_x_max if st.session_state.get("is_confirmed", False) else t_max
 
-    # 1. GRAPH WITH HIGHLIGHT PHASES & PICTOGRAMS
+    # Index Calculations
+    sIdx = min(max(0, int(round((t_start - t[0]) / dt_val))), n_samples - 1)
+    bIdx = min(max(0, int(round((t_braking - t[0]) / dt_val))), n_samples - 1)
+    zIdx = min(max(0, int(round((t_split - t[0]) / dt_val))), n_samples - 1)
+    tIdx = min(max(0, int(round((t_takeoff - t[0]) / dt_val))), n_samples - 1)
+    lIdx = min(max(0, int(round((t_landing - t[0]) / dt_val))), n_samples - 1)
+
+    group_mode_param = "phase" if "Phase-by-Phase" in report_grouping else "variance"
+
+    report = calculate_metrics(
+        t, f_total, f_left, f_right, dt_val, sIdx, bIdx, zIdx, tIdx, lIdx, 
+        filter_type=filter_type, cutoff=cutoff_freq, offsets=offsets,
+        lIdx_l=lIdx_l, lIdx_r=lIdx_r, group_by=group_mode_param
+    )
+
+    # -------------------------------------------------------------
+    # KPI Scorecard for Modern Coach Theme
+    # -------------------------------------------------------------
+    if "Coach" in app_theme:
+        jh_val = report.get("5. Flight & Performance Phase", {}).get("Jump Height - Impulse-Momentum (cm)", {}).get("Total", "-")
+        if jh_val == "-":
+            jh_val = report.get("1. Performance Component (59% Variance)", {}).get("Jump Height - Impulse-Momentum (cm)", {}).get("Total", "-")
+        
+        rsi_val = report.get("5. Flight & Performance Phase", {}).get("RSI Modified (AU)", {}).get("Total", "-")
+        if rsi_val == "-":
+            rsi_val = report.get("1. Performance Component (59% Variance)", {}).get("RSI Modified (AU)", {}).get("Total", "-")
+        
+        peak_p_val = report.get("4. Propulsive (Concentric) Phase", {}).get("Peak Propulsive Power (W)", {}).get("Total", "-")
+        if peak_p_val == "-":
+            peak_p_val = report.get("1. Performance Component (59% Variance)", {}).get("Peak Propulsive Power (W)", {}).get("Total", "-")
+        
+        ttt_ms = (t_takeoff - t_start) * 1000.0
+
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            st.markdown(f'<div class="kpi-card"><div class="kpi-sub">JUMP HEIGHT (IMPULSE)</div><div class="kpi-metric">{jh_val} cm</div><div class="kpi-sub">Standard Kinetics</div></div>', unsafe_allow_html=True)
+        with k2:
+            st.markdown(f'<div class="kpi-card"><div class="kpi-sub">RSI MODIFIED</div><div class="kpi-metric">{rsi_val}</div><div class="kpi-sub">JH (m) / Contraction Time</div></div>', unsafe_allow_html=True)
+        with k3:
+            st.markdown(f'<div class="kpi-card"><div class="kpi-sub">PEAK PROPULSIVE POWER</div><div class="kpi-metric">{peak_p_val} W</div><div class="kpi-sub">Concentric Peak</div></div>', unsafe_allow_html=True)
+        with k4:
+            st.markdown(f'<div class="kpi-card"><div class="kpi-sub">TIME TO TAKE-OFF</div><div class="kpi-metric">{ttt_ms:.0f} ms</div><div class="kpi-sub">Movement Duration</div></div>', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+    # 1. FORCE-TIME PLOT
     fig_force = go.Figure()
-    fig_force.add_trace(go.Scatter(x=t, y=sl, name="Left Limb", line=dict(color='#818cf8', width=0.8)))
-    fig_force.add_trace(go.Scatter(x=t, y=sr, name="Right Limb", line=dict(color='#f87171', width=0.8)))
-    fig_force.add_trace(go.Scatter(x=t, y=sf, name="Total Force", line=dict(color='#4d2994', width=1.2)))
+    fig_force.add_trace(go.Scatter(x=t, y=sl, name="Left Limb", line=dict(color=col_l_hex, width=1.1 if "Coach" in app_theme else 0.8)))
+    fig_force.add_trace(go.Scatter(x=t, y=sr, name="Right Limb", line=dict(color=col_r_hex, width=1.1 if "Coach" in app_theme else 0.8)))
+    fig_force.add_trace(go.Scatter(x=t, y=sf, name="Total Force", line=dict(color=col_tot_hex, width=1.8 if "Coach" in app_theme else 1.2)))
 
-    # Phase Rectangles
     fig_force.add_vrect(x0=t_start, x1=t_braking, fillcolor="rgba(234, 179, 8, 0.12)", line_width=0)
     fig_force.add_vrect(x0=t_braking, x1=t_split, fillcolor="rgba(239, 68, 68, 0.12)", line_width=0)
     fig_force.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="rgba(34, 197, 94, 0.12)", line_width=0)
     fig_force.add_vrect(x0=t_takeoff, x1=t_landing, fillcolor="rgba(148, 163, 184, 0.12)", line_width=0)
 
-    # Vertical Phase Boundary Lines
     fig_force.add_vline(x=t_start, line_width=1.5, line_dash="dash", line_color="#ca8a04")
     fig_force.add_vline(x=t_braking, line_width=1.5, line_dash="dash", line_color="#ef4444")
     fig_force.add_vline(x=t_split, line_width=1.5, line_dash="dash", line_color="#22c55e")
@@ -235,7 +347,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
     fig_force.add_annotation(x=mid_flight, y=max_y * 0.90, text="Flight", showarrow=False, font=dict(size=11, color="#64748b", family="Arial Bold"))
 
     github_base = "https://raw.githubusercontent.com/RatTongiam/Force-Analysis/main"
-
     pictograms = [
         {"url": f"{github_base}/Standing.png", "x": max(display_x_min + 0.1, t_start - 0.2)},
         {"url": f"{github_base}/UP.png", "x": mid_unweight},
@@ -248,33 +359,24 @@ if t is not None and f_total is not None and len(f_total) > 0:
     for pic in pictograms:
         fig_force.add_layout_image(
             dict(
-                source=pic["url"],
-                xref="x",
-                yref="y",
-                x=pic["x"],
-                y=max_y * 0.75,
-                sizex=0.15,
-                sizey=max_y * 0.22,
-                xanchor="center",
-                yanchor="bottom",
+                source=pic["url"], xref="x", yref="y",
+                x=pic["x"], y=max_y * 0.75,
+                sizex=0.15, sizey=max_y * 0.22,
+                xanchor="center", yanchor="bottom",
                 layer="above"
             )
         )
 
     fig_force.update_layout(
         title="FORCE-TIME ANALYSIS & SUB-PHASES",
-        xaxis_title="Time (s)",
-        yaxis_title="Force (N)",
-        height=480,
-        margin=dict(l=40, r=40, t=50, b=20)
+        xaxis_title="Time (s)", yaxis_title="Force (N)",
+        height=480, margin=dict(l=40, r=40, t=50, b=20)
     )
     fig_force.update_xaxes(range=[display_x_min, display_x_max])
-    
     st.plotly_chart(fig_force, width="stretch")
 
-    # 2. PHASE BOUNDARY TIMELINE CONTROLS (5 SLIDERS)
+    # 2. PHASE BOUNDARY TIMELINE CONTROLS
     st.markdown("##### 🎚️ Phase Boundary Timeline Controls")
-
     c1, c2, c3, c4, c5 = st.columns(5)
 
     with c1:
@@ -326,23 +428,10 @@ if t is not None and f_total is not None and len(f_total) > 0:
                 st.session_state.is_confirmed = False
                 st.rerun()
 
-    # Index Calculations
-    sIdx = min(max(0, int(round((t_start - t[0]) / dt_val))), n_samples - 1)
-    bIdx = min(max(0, int(round((t_braking - t[0]) / dt_val))), n_samples - 1)
-    zIdx = min(max(0, int(round((t_split - t[0]) / dt_val))), n_samples - 1)
-    tIdx = min(max(0, int(round((t_takeoff - t[0]) / dt_val))), n_samples - 1)
-    lIdx = min(max(0, int(round((t_landing - t[0]) / dt_val))), n_samples - 1)
-
-    report = calculate_metrics(
-        t, f_total, f_left, f_right, dt_val, sIdx, bIdx, zIdx, tIdx, lIdx, 
-        filter_type=filter_type, cutoff=cutoff_freq, offsets=offsets,
-        lIdx_l=lIdx_l, lIdx_r=lIdx_r
-    )
-
-    # ส่ง t_landing เข้าฟังก์ชัน generate_pdf_report
     pdf_bytes = generate_pdf_report(
         report, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing,
-        threshold_alert=threshold_alert, crop_x_min=crop_x_min, crop_x_max=crop_x_max
+        threshold_alert=threshold_alert, crop_x_min=crop_x_min, crop_x_max=crop_x_max,
+        theme=app_theme
     )
     st.sidebar.markdown("---")
     st.sidebar.download_button(
@@ -369,43 +458,34 @@ if t is not None and f_total is not None and len(f_total) > 0:
     fig_deficit.add_vline(x=t_landing, line_width=1.5, line_dash="dash", line_color="#0284c7")
 
     fig_deficit.add_hline(y=0, line_width=1.2, line_color="#6b7280")
-    fig_deficit.add_trace(go.Scatter(x=t, y=deficits, name="Asymmetry", fill='tozeroy', fillcolor='rgba(77, 41, 148, 0.15)', line=dict(color='#4d2994', width=1.5)))
+    fig_deficit.add_trace(go.Scatter(x=t, y=deficits, name="Asymmetry", fill='tozeroy', fillcolor='rgba(17, 57, 95, 0.15)' if "Coach" in app_theme else 'rgba(77, 41, 148, 0.15)', line=dict(color=col_tot_hex, width=1.5)))
     fig_deficit.add_hrect(y0=-threshold_alert, y1=threshold_alert, fillcolor="rgba(34, 197, 94, 0.15)", line_width=0)
 
     fig_deficit.add_annotation(
-        xref="paper", yref="y",
-        x=0.01, y=38,
-        text="<b>← Left Dominant (L > R)</b>",
-        showarrow=False,
-        font=dict(size=11, color="#818cf8"),
-        bgcolor="rgba(255, 255, 255, 0.8)",
-        bordercolor="#818cf8",
-        borderwidth=1
+        xref="paper", yref="y", x=0.01, y=38,
+        text="<b>← Left Dominant (L > R)</b>", showarrow=False,
+        font=dict(size=11, color=col_l_hex),
+        bgcolor="rgba(255, 255, 255, 0.8)", bordercolor=col_l_hex, borderwidth=1
     )
 
     fig_deficit.add_annotation(
-        xref="paper", yref="y",
-        x=0.01, y=-38,
-        text="<b>← Right Dominant (R > L)</b>",
-        showarrow=False,
-        font=dict(size=11, color="#f87171"),
-        bgcolor="rgba(255, 255, 255, 0.8)",
-        bordercolor="#f87171",
-        borderwidth=1
+        xref="paper", yref="y", x=0.01, y=-38,
+        text="<b>← Right Dominant (R > L)</b>", showarrow=False,
+        font=dict(size=11, color=col_r_hex),
+        bgcolor="rgba(255, 255, 255, 0.8)", bordercolor=col_r_hex, borderwidth=1
     )
 
     fig_deficit.update_layout(
         title="L/R ASYMMETRY % (Threshold Alert & Limb Dominance)", 
-        xaxis_title="Time (s)", 
-        yaxis_title="Deficit %", 
-        yaxis_range=[-55, 55], 
-        height=360,
+        xaxis_title="Time (s)", yaxis_title="Deficit %", 
+        yaxis_range=[-55, 55], height=360,
         margin=dict(l=40, r=40, t=50, b=20)
     )
     fig_deficit.update_xaxes(range=[display_x_min, display_x_max])
     st.plotly_chart(fig_deficit, width="stretch")
 
-    st.markdown("### Standard Biomechanical Analysis Report (Anicic et al., 2023)")
+    # 4. REPORT TABLE
+    st.markdown(f"### 📋 Biomechanical Analysis Report ({'Movement Sub-phases' if group_mode_param=='phase' else 'Anicic et al., 2023'})")
     table_rows = []
     for phase_name, metrics in report.items():
         table_rows.append({"Biomechanical Metric": f"=== {phase_name.upper()} ===", "Left": "", "Right": "", "TOTAL": "", "Deficit %": ""})
