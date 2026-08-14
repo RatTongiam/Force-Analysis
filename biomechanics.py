@@ -59,10 +59,6 @@ def calc_deficit_str(val_l, val_r):
         return "-"
 
 def detect_phases_sequential(t, sl_raw, sr_raw, dt, quiet_samples=None, filter_type="Butterworth LPF", cutoff=10.0):
-    """
-    ตัดเฟส Take-off และ Landing บน RAW Data ที่ Correct Baseline ใน Flight Phase แล้ว
-    เพื่อป้องกันผลกระทบจาก Filter Ringing และ Gibbs Phenomenon
-    """
     n_samples = len(sl_raw)
     fs = 1.0 / dt
     g = 9.80665
@@ -81,7 +77,7 @@ def detect_phases_sequential(t, sl_raw, sr_raw, dt, quiet_samples=None, filter_t
     else:
         flight_mid_idx = int(0.5 * n_samples)
 
-    # 2. ทำ Flight Baseline Drift Correction แยกซ้าย-ขวา ให้มีค่าเป็น 0 N แท้จริง
+    # 2. Flight Baseline Drift Correction แยกซ้าย-ขวา ให้มีค่าเป็น 0 N แท้จริง
     calib_start = max(0, flight_mid_idx - int(0.04 * fs))
     calib_end = min(n_samples, flight_mid_idx + int(0.04 * fs))
     
@@ -92,26 +88,23 @@ def detect_phases_sequential(t, sl_raw, sr_raw, dt, quiet_samples=None, filter_t
     sr_zeroed = np.maximum(0.0, sr_raw - offset_r)
     sf_zeroed = sl_zeroed + sr_zeroed
 
-    # 3. Detect Take-off & Landing บนสัญญาณ Zeroed RAW Data
-    thresh_single = 10.0  # 10 N ต่อข้าง
-    thresh_total = 20.0   # 20 N รวม
-    hold_samples = max(2, int(0.005 * fs))  # เกณฑ์ยืนยัน 5 ms
+    # 3. Detect Take-off & Landing บนสัญญาณ Zeroed RAW Data (ป้องกัน Gibbs Phenomenon)
+    thresh_single = 10.0
+    thresh_total = 20.0
+    hold_samples = max(2, int(0.005 * fs))
 
-    # ถอยหลังหา Take-off ของระบบ
     tIdx_auto = flight_mid_idx
     for i in range(flight_mid_idx, int(0.2 * fs), -1):
         if np.all(sf_zeroed[max(0, i - hold_samples) : i] >= thresh_total):
             tIdx_auto = i
             break
 
-    # เดินหน้าหา System Landing (ขาแรกสัมผัสพื้น)
     lIdx_auto = flight_mid_idx
     for i in range(flight_mid_idx, n_samples - hold_samples):
         if np.all(sf_zeroed[i : i + hold_samples] >= thresh_total):
             lIdx_auto = i
             break
 
-    # ตรวจจับ Landing แยกขาเพื่อเช็ค Initial Touchdown Asymmetry
     lIdx_l = flight_mid_idx
     for i in range(flight_mid_idx, n_samples - hold_samples):
         if np.all(sl_zeroed[i : i + hold_samples] >= thresh_single):
@@ -124,7 +117,7 @@ def detect_phases_sequential(t, sl_raw, sr_raw, dt, quiet_samples=None, filter_t
             lIdx_r = i
             break
 
-    # 4. กรองสัญญาณที่ Zeroed แล้ว สำหรับตัดเฟส Unweighting, Braking, Propulsive
+    # 4. กรองสัญญาณที่ชดเชย Zero Baseline แล้ว เพื่อตัดเฟส Unweighting, Braking, Propulsive
     sf_filtered = apply_signal_filter(sf_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs)
 
     win_bw = min(int(1.0 * fs), n_samples) if quiet_samples is None else quiet_samples
@@ -160,7 +153,6 @@ def detect_phases_sequential(t, sl_raw, sr_raw, dt, quiet_samples=None, filter_t
     else:
         zIdx_auto = bIdx_auto
 
-    # ปรับ Boundary ป้องกัน Index ผิดพลาด
     tIdx_auto = min(tIdx_auto, n_samples - 1)
     lIdx_auto = min(lIdx_auto, n_samples - 1)
     zIdx_auto = min(zIdx_auto, tIdx_auto)
@@ -179,7 +171,7 @@ def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lId
     sr_zeroed = np.maximum(0.0, sr_raw - offset_r)
     sf_zeroed = sl_zeroed + sr_zeroed
 
-    # กรองสัญญาณข้อมูลที่ชดเชย Zero Baseline แล้วเพื่อนำไปคำนวณ Metrics
+    # กรองสัญญาณที่ Zero Baseline แล้วเพื่อคำนวณชีวกลศาสตร์
     sf = apply_signal_filter(sf_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
     sl = apply_signal_filter(sl_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
     sr = apply_signal_filter(sr_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
@@ -290,7 +282,6 @@ def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lId
     leg_stiffness = (peak_brak_f / (com_depth / 100.0)) if com_depth > 0 else 0.0
     flight_jump_ratio = flight_dur / contraction_time if contraction_time > 0 else 0.0
 
-    # Initial Contact Time Asymmetry (ms)
     touchdown_delay_ms = "-"
     if lIdx_l is not None and lIdx_r is not None:
         diff_td = (t[lIdx_l] - t[lIdx_r]) * 1000.0
