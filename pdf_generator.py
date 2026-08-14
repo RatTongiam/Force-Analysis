@@ -263,7 +263,7 @@ def build_modern_coach_pdf(doc, report, t, sf, sl, sr, t_start, t_braking, t_spl
     # =========================================================
     header_data = [
         [Paragraph("<b>CMJ Coach Analyzer v4 — Research &amp; Clinical Report</b>", title_style)],
-        [Paragraph("PRIMA MOTION TECHNOLOGY • Bilateral Asymmetry &amp; Phase Dynamics Engine", sub_style)]
+        [Paragraph("Dr.Chawin and PRIMA MOTION TECHNOLOGY • Bilateral Asymmetry &amp; Phase Dynamics Engine", sub_style)]
     ]
     head_table = Table(header_data, colWidths=[545])
     head_table.setStyle(TableStyle([
