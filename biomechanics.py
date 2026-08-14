@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from scipy.signal import butter, filtfilt
+from scipy.ndimage import label
 
 def butter_lowpass_filter(data, cutoff=10.0, fs=2000.0, order=4):
     if len(data) <= order * 3:
@@ -58,86 +59,66 @@ def calc_deficit_str(val_l, val_r):
     except (ValueError, TypeError):
         return "-"
 
-def detect_phases_sequential(t, sl_raw, sr_raw, dt, quiet_samples=None, filter_type="Butterworth LPF", cutoff=10.0):
-    n_samples = len(sl_raw)
+def detect_phases_sequential(t, sf_raw, dt, quiet_samples=None, filter_type="Butterworth LPF", cutoff=10.0, sl_raw=None, sr_raw=None):
+    n_samples = len(sf_raw)
     fs = 1.0 / dt
     g = 9.80665
-    sf_raw = sl_raw + sr_raw
 
-    # 1. กรองสัญญาณชั่วคราวเพื่อค้นหาตำแหน่งกึ่งกลางช่วงบิน (Flight Center)
-    sf_temp = apply_signal_filter(sf_raw, filter_type=filter_type, cutoff=cutoff, fs=fs)
-    win_search = int(0.15 * fs)
-    if len(sf_temp) > win_search:
-        rolling_min = pd.Series(sf_temp).rolling(window=win_search, center=True).mean().values
-        search_start = int(0.3 * fs)
-        if len(rolling_min) > search_start:
-            flight_mid_idx = np.argmin(rolling_min[search_start:]) + search_start
-        else:
-            flight_mid_idx = int(0.5 * n_samples)
-    else:
-        flight_mid_idx = int(0.5 * n_samples)
-
-    # 2. Flight Baseline Drift Correction แยกซ้าย-ขวา ให้มีค่าเป็น 0 N แท้จริง
-    calib_start = max(0, flight_mid_idx - int(0.04 * fs))
-    calib_end = min(n_samples, flight_mid_idx + int(0.04 * fs))
+    # 1. ใช้ Logic เดิม: ค้นหา Flight Block ด้วย label
+    sf = apply_signal_filter(sf_raw, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
     
-    offset_l = np.mean(sl_raw[calib_start:calib_end]) if calib_end > calib_start else 0.0
-    offset_r = np.mean(sr_raw[calib_start:calib_end]) if calib_end > calib_start else 0.0
-
-    sl_zeroed = np.maximum(0.0, sl_raw - offset_l)
-    sr_zeroed = np.maximum(0.0, sr_raw - offset_r)
-    sf_zeroed = sl_zeroed + sr_zeroed
-
-    # 3. Detect Take-off & Landing บนสัญญาณ Zeroed RAW Data (ป้องกัน Gibbs Phenomenon)
-    thresh_single = 10.0
-    thresh_total = 20.0
-    hold_samples = max(2, int(0.005 * fs))
-
-    tIdx_auto = flight_mid_idx
-    for i in range(flight_mid_idx, int(0.2 * fs), -1):
-        if np.all(sf_zeroed[max(0, i - hold_samples) : i] >= thresh_total):
-            tIdx_auto = i
-            break
-
-    lIdx_auto = flight_mid_idx
-    for i in range(flight_mid_idx, n_samples - hold_samples):
-        if np.all(sf_zeroed[i : i + hold_samples] >= thresh_total):
-            lIdx_auto = i
-            break
-
-    lIdx_l = flight_mid_idx
-    for i in range(flight_mid_idx, n_samples - hold_samples):
-        if np.all(sl_zeroed[i : i + hold_samples] >= thresh_single):
-            lIdx_l = i
-            break
-
-    lIdx_r = flight_mid_idx
-    for i in range(flight_mid_idx, n_samples - hold_samples):
-        if np.all(sr_zeroed[i : i + hold_samples] >= thresh_single):
-            lIdx_r = i
-            break
-
-    # 4. กรองสัญญาณที่ชดเชย Zero Baseline แล้ว เพื่อตัดเฟส Unweighting, Braking, Propulsive
-    sf_filtered = apply_signal_filter(sf_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs)
-
     win_bw = min(int(1.0 * fs), n_samples) if quiet_samples is None else quiet_samples
-    bw = np.mean(sf_filtered[:win_bw])
-    force_sd = np.std(sf_filtered[:win_bw])
+    bw = np.mean(sf[:win_bw])
+    force_sd = np.std(sf[:win_bw])
     mass = bw / g if bw > 0 else 70.0
 
+    flight_threshold = 25.0
+    flight_mask = sf < flight_threshold
+    labeled, num_features = label(flight_mask)
+    
+    tIdx_auto = None
+    lIdx_auto = None
+
+    if num_features > 0:
+        valid_blocks = []
+        for i in range(1, num_features + 1):
+            idxs = np.where(labeled == i)[0]
+            if len(idxs) > int(0.10 * fs) and idxs[0] > int(0.5 * fs):
+                valid_blocks.append((i, len(idxs), idxs[0], idxs[-1]))
+        
+        if valid_blocks:
+            best_block = max(valid_blocks, key=lambda x: x[1])
+            tIdx_auto = best_block[2]
+            lIdx_auto = best_block[3]
+
+    if tIdx_auto is None:
+        global_peak_idx = int(0.5 * fs) + np.argmax(sf[int(0.5 * fs):])
+        tIdx_auto = max(int(0.5 * fs), global_peak_idx - int(0.2 * fs))
+        lIdx_auto = min(n_samples - 1, tIdx_auto + int(0.4 * fs))
+
+    # คำนวณ Flight Offset จากช่วง Flight จริง
+    offset_l, offset_r = 0.0, 0.0
+    if sl_raw is not None and sr_raw is not None and lIdx_auto > tIdx_auto:
+        f_mid_start = tIdx_auto + int((lIdx_auto - tIdx_auto) * 0.25)
+        f_mid_end = tIdx_auto + int((lIdx_auto - tIdx_auto) * 0.75)
+        if f_mid_end > f_mid_start:
+            offset_l = float(np.mean(sl_raw[f_mid_start:f_mid_end]))
+            offset_r = float(np.mean(sr_raw[f_mid_start:f_mid_end]))
+
+    # 2. ค้นหา Propulsive, Braking, Start ตาม Logic เดิม
     prop_search_start = max(0, tIdx_auto - int(1.5 * fs))
     if tIdx_auto > prop_search_start:
-        peak_prop_idx = prop_search_start + np.argmax(sf_filtered[prop_search_start:tIdx_auto])
+        peak_prop_idx = prop_search_start + np.argmax(sf[prop_search_start:tIdx_auto])
     else:
         peak_prop_idx = max(0, tIdx_auto - 1)
 
     if peak_prop_idx > prop_search_start:
-        bIdx_auto = prop_search_start + np.argmin(sf_filtered[prop_search_start:peak_prop_idx])
+        bIdx_auto = prop_search_start + np.argmin(sf[prop_search_start:peak_prop_idx])
     else:
         bIdx_auto = max(0, peak_prop_idx - int(0.2 * fs))
 
     threshold_bw = max(bw * 0.98, bw - 3 * force_sd)
-    back_search_window = sf_filtered[:bIdx_auto]
+    back_search_window = sf[:bIdx_auto]
     bw_crossings = np.where(back_search_window >= threshold_bw)[0]
     
     if len(bw_crossings) > 0:
@@ -145,13 +126,28 @@ def detect_phases_sequential(t, sl_raw, sr_raw, dt, quiet_samples=None, filter_t
     else:
         sIdx_auto = max(0, bIdx_auto - int(0.4 * fs))
 
-    vel_temp = np.cumsum((sf_filtered[sIdx_auto:tIdx_auto + 1] - bw) / mass) * dt
+    vel_temp = np.cumsum((sf[sIdx_auto:tIdx_auto + 1] - bw) / mass) * dt
     b_rel = max(0, bIdx_auto - sIdx_auto)
     zero_crossings = np.where(vel_temp[b_rel:] >= 0)[0]
     if len(zero_crossings) > 0:
         zIdx_auto = bIdx_auto + zero_crossings[0]
     else:
         zIdx_auto = bIdx_auto
+
+    # ตรวจสอบ Landing แยกขา
+    lIdx_l, lIdx_r = lIdx_auto, lIdx_auto
+    if sl_raw is not None and sr_raw is not None:
+        sl_zeroed = np.maximum(0.0, sl_raw - offset_l)
+        sr_zeroed = np.maximum(0.0, sr_raw - offset_r)
+        
+        for i in range(tIdx_auto + int(0.05 * fs), min(n_samples, tIdx_auto + int(1.2 * fs))):
+            if sl_zeroed[i] >= 15.0:
+                lIdx_l = i
+                break
+        for i in range(tIdx_auto + int(0.05 * fs), min(n_samples, tIdx_auto + int(1.2 * fs))):
+            if sr_zeroed[i] >= 15.0:
+                lIdx_r = i
+                break
 
     tIdx_auto = min(tIdx_auto, n_samples - 1)
     lIdx_auto = min(lIdx_auto, n_samples - 1)
@@ -171,7 +167,6 @@ def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lId
     sr_zeroed = np.maximum(0.0, sr_raw - offset_r)
     sf_zeroed = sl_zeroed + sr_zeroed
 
-    # กรองสัญญาณที่ Zero Baseline แล้วเพื่อคำนวณชีวกลศาสตร์
     sf = apply_signal_filter(sf_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
     sl = apply_signal_filter(sl_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
     sr = apply_signal_filter(sr_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
