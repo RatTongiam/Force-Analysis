@@ -3,7 +3,7 @@ import pandas as pd
 from scipy.signal import butter, filtfilt
 from scipy.ndimage import label
 
-def butter_lowpass_filter(data, cutoff=10.0, fs=2000.0, order=4):
+def butter_lowpass_filter(data, cutoff=50.0, fs=2000.0, order=4):
     if len(data) <= order * 3:
         return np.array(data, dtype=float)
     
@@ -19,7 +19,7 @@ def butter_lowpass_filter(data, cutoff=10.0, fs=2000.0, order=4):
     y = filtfilt(b, a, data, padlen=pad_l)
     return y
 
-def apply_signal_filter(data, filter_type="Butterworth LPF", cutoff=10.0, fs=1000.0, window_size=15):
+def apply_signal_filter(data, filter_type="Butterworth LPF", cutoff=50.0, fs=1000.0, window_size=15):
     data_arr = np.array(data, dtype=float)
     if len(data_arr) == 0:
         return data_arr
@@ -34,7 +34,7 @@ def apply_signal_filter(data, filter_type="Butterworth LPF", cutoff=10.0, fs=100
     else:
         filtered = data_arr
 
-    return np.maximum(0.0, filtered)
+    return filtered
 
 def moving_average(arr, window):
     if window <= 1:
@@ -45,7 +45,12 @@ def calc_avg(arr):
     return np.mean(arr) if len(arr) > 0 else 0.0
 
 def calc_impulse(arr, dt):
-    return np.sum(arr) * dt
+    """
+    คำนวณ Impulse ด้วยวิธี Trapezoidal Rule
+    """
+    if len(arr) < 2:
+        return float(np.sum(arr) * dt)
+    return float(np.trapz(arr, dx=dt))
 
 def calc_deficit_str(val_l, val_r):
     try:
@@ -59,12 +64,12 @@ def calc_deficit_str(val_l, val_r):
     except (ValueError, TypeError):
         return "-"
 
-def detect_phases_sequential(t, sf_raw, dt, quiet_samples=None, filter_type="Butterworth LPF", cutoff=10.0, sl_raw=None, sr_raw=None):
+def detect_phases_sequential(t, sf_raw, dt, quiet_samples=None, filter_type="Butterworth LPF", cutoff=50.0, sl_raw=None, sr_raw=None):
     n_samples = len(sf_raw)
     fs = 1.0 / dt
     g = 9.80665
 
-    # 1. ใช้ Logic เดิม: ค้นหา Flight Block ด้วย label
+    # 1. กรองสัญญาณเพื่อค้นหา Flight Block ด้วย scipy.ndimage.label
     sf = apply_signal_filter(sf_raw, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
     
     win_bw = min(int(1.0 * fs), n_samples) if quiet_samples is None else quiet_samples
@@ -96,7 +101,7 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples=None, filter_type="But
         tIdx_auto = max(int(0.5 * fs), global_peak_idx - int(0.2 * fs))
         lIdx_auto = min(n_samples - 1, tIdx_auto + int(0.4 * fs))
 
-    # คำนวณ Flight Offset จากช่วง Flight จริง
+    # คำนวณ Residual Force Offset ในช่วง Flight Phase เพื่อนำไปหักล้าง Linear Baseline Drift
     offset_l, offset_r = 0.0, 0.0
     if sl_raw is not None and sr_raw is not None and lIdx_auto > tIdx_auto:
         f_mid_start = tIdx_auto + int((lIdx_auto - tIdx_auto) * 0.25)
@@ -105,7 +110,7 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples=None, filter_type="But
             offset_l = float(np.mean(sl_raw[f_mid_start:f_mid_end]))
             offset_r = float(np.mean(sr_raw[f_mid_start:f_mid_end]))
 
-    # 2. ค้นหา Propulsive, Braking, Start ตาม Logic เดิม
+    # 2. ค้นหา Propulsive, Braking, Start
     prop_search_start = max(0, tIdx_auto - int(1.5 * fs))
     if tIdx_auto > prop_search_start:
         peak_prop_idx = prop_search_start + np.argmax(sf[prop_search_start:tIdx_auto])
@@ -126,7 +131,12 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples=None, filter_type="But
     else:
         sIdx_auto = max(0, bIdx_auto - int(0.4 * fs))
 
-    vel_temp = np.cumsum((sf[sIdx_auto:tIdx_auto + 1] - bw) / mass) * dt
+    # อินทิเกรตหาจุด Zero-Velocity Crossing
+    net_acc = (sf[sIdx_auto:tIdx_auto + 1] - bw) / mass
+    vel_temp = np.zeros(len(net_acc))
+    for k in range(1, len(net_acc)):
+        vel_temp[k] = vel_temp[k - 1] + 0.5 * (net_acc[k - 1] + net_acc[k]) * dt
+
     b_rel = max(0, bIdx_auto - sIdx_auto)
     zero_crossings = np.where(vel_temp[b_rel:] >= 0)[0]
     if len(zero_crossings) > 0:
@@ -134,11 +144,11 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples=None, filter_type="But
     else:
         zIdx_auto = bIdx_auto
 
-    # ตรวจสอบ Landing แยกขา
+    # 3. ตรวจสอบ Touchdown แยกขาซ้าย-ขวา บน Baseline Corrected Signal
     lIdx_l, lIdx_r = lIdx_auto, lIdx_auto
     if sl_raw is not None and sr_raw is not None:
-        sl_zeroed = np.maximum(0.0, sl_raw - offset_l)
-        sr_zeroed = np.maximum(0.0, sr_raw - offset_r)
+        sl_zeroed = sl_raw - offset_l
+        sr_zeroed = sr_raw - offset_r
         
         for i in range(tIdx_auto + int(0.05 * fs), min(n_samples, tIdx_auto + int(1.2 * fs))):
             if sl_zeroed[i] >= 15.0:
@@ -157,16 +167,17 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples=None, filter_type="But
 
     return sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto, lIdx_l, lIdx_r, (offset_l, offset_r)
 
-def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lIdx, filter_type="Butterworth LPF", cutoff=10.0, offsets=(0.0, 0.0), lIdx_l=None, lIdx_r=None):
+def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lIdx, filter_type="Butterworth LPF", cutoff=50.0, offsets=(0.0, 0.0), lIdx_l=None, lIdx_r=None):
     n_samples = len(sf_raw)
     fs = 1.0 / dt
     g = 9.80665
 
     offset_l, offset_r = offsets
-    sl_zeroed = np.maximum(0.0, sl_raw - offset_l)
-    sr_zeroed = np.maximum(0.0, sr_raw - offset_r)
+    sl_zeroed = sl_raw - offset_l
+    sr_zeroed = sr_raw - offset_r
     sf_zeroed = sl_zeroed + sr_zeroed
 
+    # กรองสัญญาณหลังชดเชย Baseline Drift
     sf = apply_signal_filter(sf_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
     sl = apply_signal_filter(sl_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
     sr = apply_signal_filter(sr_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
@@ -179,15 +190,14 @@ def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lId
     
     mass = bw / g if bw > 0 else 70.0
 
+    # คำนวณความเร็ว (Velocity) และการกระจัด (Displacement) ด้วย Trapezoidal Numerical Integration
     vel_total = np.zeros(n_samples)
     disp_total = np.zeros(n_samples)
-    cV = cD = 0.0
-
-    for i in range(sIdx, min(tIdx + 1, n_samples)):
-        cV += ((sf[i] - bw) / mass) * dt
-        vel_total[i] = cV
-        cD += cV * dt
-        disp_total[i] = cD
+    
+    net_acc = (sf - bw) / mass
+    for i in range(sIdx + 1, min(tIdx + 1, n_samples)):
+        vel_total[i] = vel_total[i - 1] + 0.5 * (net_acc[i - 1] + net_acc[i]) * dt
+        disp_total[i] = disp_total[i - 1] + 0.5 * (vel_total[i - 1] + vel_total[i]) * dt
 
     contraction_time = max(dt, t[tIdx] - t[sIdx])
     propulsive_dur = max(0.0, t[tIdx] - t[zIdx])
@@ -257,13 +267,13 @@ def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lId
     idx_50ms = min(n_samples, zIdx + int(0.05 / dt))
     idx_100ms = min(n_samples, zIdx + int(0.10 / dt))
     
-    p1_imp = np.sum(sf[zIdx:idx_50ms] - bw) * dt if idx_50ms > zIdx else 0.0
-    p1_imp_l = np.sum(sl[zIdx:idx_50ms] - bw_left) * dt if idx_50ms > zIdx else 0.0
-    p1_imp_r = np.sum(sr[zIdx:idx_50ms] - bw_right) * dt if idx_50ms > zIdx else 0.0
+    p1_imp = calc_impulse(sf[zIdx:idx_50ms] - bw, dt) if idx_50ms > zIdx else 0.0
+    p1_imp_l = calc_impulse(sl[zIdx:idx_50ms] - bw_left, dt) if idx_50ms > zIdx else 0.0
+    p1_imp_r = calc_impulse(sr[zIdx:idx_50ms] - bw_right, dt) if idx_50ms > zIdx else 0.0
 
-    p2_imp = np.sum(sf[idx_50ms:idx_100ms] - bw) * dt if idx_100ms > idx_50ms else 0.0
-    p2_imp_l = np.sum(sl[idx_50ms:idx_100ms] - bw_left) * dt if idx_100ms > idx_50ms else 0.0
-    p2_imp_r = np.sum(sr[idx_50ms:idx_100ms] - bw_right) * dt if idx_100ms > idx_50ms else 0.0
+    p2_imp = calc_impulse(sf[idx_50ms:idx_100ms] - bw, dt) if idx_100ms > idx_50ms else 0.0
+    p2_imp_l = calc_impulse(sl[idx_50ms:idx_100ms] - bw_left, dt) if idx_100ms > idx_50ms else 0.0
+    p2_imp_r = calc_impulse(sr[idx_50ms:idx_100ms] - bw_right, dt) if idx_100ms > idx_50ms else 0.0
 
     land_impulse = land_impulse_l = land_impulse_r = 0.0
     if lIdx > tIdx and lIdx < n_samples:
