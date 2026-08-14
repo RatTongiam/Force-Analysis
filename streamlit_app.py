@@ -1,821 +1,367 @@
-import streamlit as st
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
+from scipy.signal import butter, filtfilt
+from scipy.ndimage import label
+from typing import Tuple, Dict, Any, Optional
 
-from parsers import (
-    parse_tsv, 
-    parse_vald_forcedecks_exact, 
-    parse_qtm_json, 
-    parse_single_csv_cforce,
-    parse_musclelab_csv
-)
-from biomechanics import (
-    apply_signal_filter, 
-    detect_phases_sequential, 
-    calculate_metrics,
-    calc_rfd_start,
-    calc_max_win_rfd
-)
-from pdf_generator import generate_pdf_report
-
-st.set_page_config(layout="wide", page_title="Free JumpAnz Team - Prima Motion Tech")
-
-# -------------------------------------------------------------
-# 1. Sidebar: Data Import & File Upload First
-# -------------------------------------------------------------
-st.sidebar.header("📁 1. Data Import & File Upload")
-
-data_mode = st.sidebar.radio("Select Input Mode", [
-    "MuscleLab CSV",
-    "Single JSON (QTM)",
-    "Dual TSV (QTM)", 
-    "VALD ForceDecks CSV", 
-    "C-Force Performance CSV"
-])
-
-dt, t, f_left, f_right, f_total = None, None, None, None, None
-file_signature = None
-
-if data_mode == "MuscleLab CSV":
-    file_ml = st.sidebar.file_uploader("Upload MuscleLab CSV File (.csv)", type=["csv"])
-    if file_ml:
-        file_signature = f"ML_{file_ml.name}_{file_ml.size}"
-        try:
-            dt, t, f_left, f_right, f_total = parse_musclelab_csv(file_ml)
-        except Exception as e:
-            st.error(f"Error parsing MuscleLab CSV file: {e}")
-
-elif data_mode == "Single JSON (QTM)":
-    file_json = st.sidebar.file_uploader("Upload QTM JSON File (.json)", type=["json"])
-    if file_json:
-        file_signature = f"QTM_JSON_{file_json.name}_{file_json.size}"
-        try:
-            plates = parse_qtm_json(file_json)
-            if len(plates) >= 2:
-                st.sidebar.markdown("---")
-                st.sidebar.subheader("Force Plate Mapping")
-                plate_names = [p["name"] for p in plates]
-                
-                if len(plates) == 2:
-                    left_name = st.sidebar.selectbox("Left Limb Plate", plate_names, index=0)
-                    right_names = [n for n in plate_names if n != left_name]
-                    right_name = st.sidebar.selectbox("Right Limb Plate", plate_names, index=1 if len(plate_names) > 1 else 0)
-                    
-                    swap_sides = st.sidebar.toggle("🔀 Swap Left / Right Sides", value=False)
-                    if swap_sides:
-                        left_name, right_name = right_name, left_name
-                else:
-                    left_name = st.sidebar.selectbox("Left Limb Plate", plate_names, index=0)
-                    right_name = st.sidebar.selectbox("Right Limb Plate", plate_names, index=min(1, len(plate_names)-1))
-                
-                p_left = next(p for p in plates if p["name"] == left_name)
-                p_right = next(p for p in plates if p["name"] == right_name)
-                
-                num_frames = min(len(p_left["fz"]), len(p_right["fz"]))
-                dt = float(p_left["dt"])
-                t = np.arange(num_frames) * dt
-                f_left = p_left["fz"][:num_frames]
-                f_right = p_right["fz"][:num_frames]
-                f_total = f_left + f_right
-            else:
-                st.error("QTM JSON must contain at least 2 Force Plates.")
-        except Exception as e:
-            st.error(f"Error parsing QTM JSON file: {e}")
-
-elif data_mode == "Dual TSV (QTM)":
-    file_a = st.sidebar.file_uploader("Upload Plate File A (.tsv)", type=["tsv"])
-    side_a = st.sidebar.selectbox("Assign Side File A", ["left", "right"], index=0)
-    file_b = st.sidebar.file_uploader("Upload Plate File B (.tsv)", type=["tsv"])
-    side_b = st.sidebar.selectbox("Assign Side File B", ["left", "right"], index=1)
+def butter_lowpass_filter(data: np.ndarray, cutoff: float = 50.0, fs: float = 2000.0, order: int = 4) -> np.ndarray:
+    data_arr = np.asarray(data, dtype=float)
+    if len(data_arr) <= order * 3:
+        return data_arr
     
-    if file_a and file_b:
-        file_signature = f"TSV_{file_a.name}_{file_b.name}_{file_a.size}_{file_b.size}"
-        try:
-            dt, data_a, fz_idx_a = parse_tsv(file_a)
-            _, data_b, fz_idx_b = parse_tsv(file_b)
-            dt = float(dt)
-            num_frames = min(len(data_a), len(data_b))
-            t = np.arange(num_frames) * dt
-            fz_a = np.abs(data_a[:num_frames, fz_idx_a])
-            fz_b = np.abs(data_b[:num_frames, fz_idx_b])
-            f_left = fz_a if side_a == "left" else fz_b
-            f_right = fz_b if side_a == "left" else fz_a
-            f_total = f_left + f_right
-        except Exception as e:
-            st.error(f"Error parsing Dual TSV files: {e}")
+    nyq = 0.5 * fs
+    normal_cutoff = max(0.01, min(0.99, cutoff / nyq))
+    b, a = butter(order, normal_cutoff, btype='low', analog=False)
+    
+    # Dynamic padlen ตาม Sampling frequency เพื่อป้องกัน Transient ripple ที่ขอบสัญญาณ
+    pad_l = min(len(data_arr) - 1, int(1.0 * fs))
+    y = filtfilt(b, a, data_arr, padlen=pad_l)
+    return y
 
-elif data_mode == "VALD ForceDecks CSV":
-    file_vald = st.sidebar.file_uploader("Upload VALD ForceDecks File (.csv / .tsv)", type=["csv", "tsv"])
-    if file_vald:
-        file_signature = f"VALD_{file_vald.name}_{file_vald.size}"
-        try:
-            dt, t, f_left, f_right, f_total = parse_vald_forcedecks_exact(file_vald)
-        except Exception as e:
-            st.error(f"Error parsing VALD ForceDecks file: {e}")
+def apply_signal_filter(data: np.ndarray, filter_type: str = "Butterworth LPF", cutoff: float = 50.0, fs: float = 1000.0, window_size: int = 15) -> np.ndarray:
+    data_arr = np.asarray(data, dtype=float)
+    if len(data_arr) == 0:
+        return data_arr
 
-elif data_mode == "C-Force Performance CSV":
-    file_csv = st.sidebar.file_uploader("Upload Single CSV File (.csv)", type=["csv"])
-    if file_csv:
-        file_signature = f"CFORCE_{file_csv.name}_{file_csv.size}"
-        try:
-            dt, t, f_left, f_right, f_total = parse_single_csv_cforce(file_csv)
-        except Exception as e:
-            st.error(f"Error parsing Single CSV file: {e}")
+    if filter_type == "Butterworth LPF":
+        return butter_lowpass_filter(data_arr, cutoff=cutoff, fs=fs, order=4)
+    elif filter_type == "Moving Average":
+        if window_size <= 1:
+            return data_arr
+        return pd.Series(data_arr).rolling(window=window_size, center=True, min_periods=1).mean().values
+    return data_arr
 
-# -------------------------------------------------------------
-# 2. Sidebar: Signal Filtering Options
-# -------------------------------------------------------------
-st.sidebar.markdown("---")
-st.sidebar.header("⚙️ 2. Signal Filtering")
+def calc_avg(arr: np.ndarray) -> float:
+    return float(np.mean(arr)) if len(arr) > 0 else 0.0
 
-filter_type = st.sidebar.selectbox(
-    "Select Filter Algorithm",
-    ["Butterworth LPF", "Moving Average", "Raw Data (None)"],
-    index=0
-)
+def calc_impulse(arr: np.ndarray, dt: float) -> float:
+    if len(arr) < 2:
+        return float(np.sum(arr) * dt)
+    return float(np.trapezoid(arr, dx=dt))
 
-if filter_type == "Butterworth LPF":
-    cutoff_freq = st.sidebar.slider("Cutoff Frequency (Hz)", min_value=5.0, max_value=100.0, value=50.0, step=5.0)
-    filter_size = 15
-elif filter_type == "Moving Average":
-    filter_size = st.sidebar.selectbox("Window Size (Frames)", [1, 7, 15, 31], index=2)
-    cutoff_freq = 50.0
-else:
-    cutoff_freq = 50.0
-    filter_size = 1
-
-threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
-
-# -------------------------------------------------------------
-# 3. Sidebar: Theme Selection (Auto Metric Grouping)
-# -------------------------------------------------------------
-st.sidebar.markdown("---")
-st.sidebar.header("🎨 3. Presentation Theme")
-
-app_theme = st.sidebar.selectbox(
-    "Select Dashboard Theme",
-    ["Modern Coach (Dashboard)", "Classic Purple (Original)"],
-    index=0
-)
-
-if "Coach" in app_theme:
-    group_mode_param = "phase"
-    involved_limb = st.sidebar.selectbox("Involved Limb", ["None / Athlete", "Left", "Right"], index=0)
-    baseline_jh = st.sidebar.number_input("Baseline JH (cm, optional)", value=0.0, step=0.5, format="%.1f")
-    mdc_pct = st.sidebar.number_input("MDC / Meaningful Change (%)", value=5.0, step=0.5, format="%.1f")
-else:
-    group_mode_param = "variance"
-    involved_limb = "None / Athlete"
-    baseline_jh = 0.0
-    mdc_pct = 5.0
-
-# Dynamic Styling
-if "Coach" in app_theme:
-    col_l_hex = "#2f6fed"
-    col_r_hex = "#ed7d31"
-    col_tot_hex = "#11395f"
-    st.markdown("""
-    <style>
-    .coach-header {
-        background: linear-gradient(120deg, #0d3154, #1c507f);
-        color: #ffffff; padding: 18px 22px; border-radius: 12px; margin-bottom: 15px;
-    }
-    .kpi-card {
-        background: #ffffff; border: 1px solid #e4e9f1; border-radius: 12px;
-        padding: 12px 14px; box-shadow: 0 2px 6px rgba(16,24,40,.04); text-align: center;
-    }
-    .kpi-metric { font-size: 24px; font-weight: 800; color: #11395f; margin: 4px 0; }
-    .kpi-sub { font-size: 11px; color: #667085; font-weight: 600; }
-    .coach-box {
-        background: #f7fbff; border-left: 5px solid #11395f; padding: 14px;
-        border-radius: 8px; font-size: 13.5px; line-height: 1.5; margin-bottom: 8px;
-    }
-    .coach-action {
-        background: #fff8f1; border: 1px solid #f5d2b7; padding: 9px 12px;
-        border-radius: 8px; font-size: 12.5px; margin-top: 6px; color: #7c2d12;
-    }
-    .qc-banner-pass { background: #e9f7f0; color: #167a55; border: 1px solid #c9ead9; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; }
-    .qc-banner-review { background: #fff4dc; color: #8a5a00; border: 1px solid #f2dcaa; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; }
-    .qc-banner-reject { background: #fdecec; color: #a52b2b; border: 1px solid #f2caca; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; }
-    .status-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 800; }
-    .status-low { background: #e9f7f0; color: #167a55; }
-    .status-watch { background: #fff2d6; color: #9b6700; }
-    .status-flag { background: #fdecec; color: #b83232; }
-    </style>
-    """, unsafe_allow_html=True)
-else:
-    col_l_hex = "#818cf8"
-    col_r_hex = "#f87171"
-    col_tot_hex = "#4d2994"
-
-# Dashboard Main Header
-if "Coach" in app_theme:
-    st.markdown("""
-    <div class="coach-header">
-        <h2 style="margin:0; font-size:24px; color:#fff;">CMJ Coach Analyzer v4 — Research & Clinical</h2>
-        <p style="margin:4px 0 0; font-size:12px; color:#dce8f5;">Dr.Chawin and PRIMA MOTION TECHNOLOGY • Comprehensive Biomechanics & Dual-Plate Asymmetry Engine</p>
-    </div>
-    """, unsafe_allow_html=True)
-else:
-    st.title("Free JumpAnz Team - Biomechanics Analysis")
-    st.caption("PRIMA MOTION TECHNOLOGY — Technology that unlocks scientific insight")
-
-def asym_badge(val_l, val_r):
+def calc_deficit_str(val_l: Any, val_r: Any) -> str:
     try:
-        vl, vr = float(val_l), float(val_r)
-        mx = max(abs(vl), abs(vr))
-        if mx == 0:
-            return "-", '<span class="status-pill status-low">Equal</span>'
-        diff = ((vl - vr) / mx) * 100.0
-        txt = f"{abs(diff):.1f}% {'Left' if diff > 0 else 'Right'} higher"
-        cls = "status-low" if abs(diff) < 10 else ("status-watch" if abs(diff) < 15 else "status-flag")
-        badge = f'<span class="status-pill {cls}">{"Low" if abs(diff)<10 else ("Monitor" if abs(diff)<15 else "Flag")}</span>'
-        return txt, badge
-    except Exception:
-        return "-", "-"
+        vl = float(val_l)
+        vr = float(val_r)
+        max_val = max(abs(vl), abs(vr))
+        if max_val == 0:
+            return "-"
+        diff_pct = ((vl - vr) / max_val) * 100.0
+        return f"{diff_pct:+.1f}%"
+    except (ValueError, TypeError):
+        return "-"
 
-if t is not None and f_total is not None and len(f_total) > 0:
-    dt_val = float(dt) if dt is not None and dt > 0 else 0.001
-    fs = 1.0 / dt_val
+def calc_rfd_start(arr: np.ndarray, s_idx: int, dt: float, ms: float) -> float:
+    if arr is None or len(arr) == 0 or s_idx < 0 or s_idx >= len(arr):
+        return 0.0
+    n_pts = int((ms / 1000.0) / dt)
+    if n_pts <= 0:
+        return 0.0
+    target_idx = s_idx + n_pts
+    if target_idx < len(arr):
+        return float((arr[target_idx] - arr[s_idx]) / (ms / 1000.0))
+    return 0.0
+
+def calc_max_win_rfd(arr: np.ndarray, s_idx: int, e_idx: int, dt: float, win_ms: float = 20.0) -> float:
+    if arr is None or len(arr) == 0 or s_idx < 0 or e_idx >= len(arr) or e_idx <= s_idx:
+        return 0.0
+    w = max(1, int((win_ms / 1000.0) / dt))
+    if (e_idx - s_idx) <= w:
+        return 0.0
+    seg = arr[s_idx:e_idx + 1]
+    if len(seg) <= w:
+        return 0.0
+    slopes = (seg[w:] - seg[:-w]) / (w * dt)
+    return float(np.max(slopes)) if len(slopes) > 0 else 0.0
+
+def detect_phases_sequential(t: np.ndarray, sf_raw: np.ndarray, dt: float, quiet_samples: Optional[int] = None, filter_type: str = "Butterworth LPF", cutoff: float = 50.0, sl_raw: Optional[np.ndarray] = None, sr_raw: Optional[np.ndarray] = None) -> Tuple[int, int, int, int, int, int, int, Tuple[float, float]]:
+    n_samples = len(sf_raw)
+    fs = 1.0 / dt
     g = 9.80665
-    
-    n_samples = len(f_total)
-    quiet_samples = max(1, min(int(0.5 / dt_val), n_samples))
 
-    sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto, lIdx_l, lIdx_r, offsets = detect_phases_sequential(
-        t, f_total, dt_val, quiet_samples=quiet_samples, 
-        filter_type=filter_type, cutoff=cutoff_freq, 
-        sl_raw=f_left, sr_raw=f_right
+    sf = apply_signal_filter(sf_raw, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
+    win_bw = min(int(1.0 * fs), n_samples) if quiet_samples is None else quiet_samples
+    bw = np.mean(sf[:win_bw])
+    force_sd = np.std(sf[:win_bw])
+    mass = bw / g if bw > 0 else 70.0
+
+    flight_threshold = 25.0
+    flight_mask = sf < flight_threshold
+    labeled, num_features = label(flight_mask)
+    
+    tIdx_auto, lIdx_auto = None, None
+    if num_features > 0:
+        valid_blocks = []
+        for i in range(1, num_features + 1):
+            idxs = np.where(labeled == i)[0]
+            if len(idxs) > int(0.10 * fs) and idxs[0] > int(0.5 * fs):
+                valid_blocks.append((i, len(idxs), idxs[0], idxs[-1]))
+        if valid_blocks:
+            best_block = max(valid_blocks, key=lambda x: x[1])
+            tIdx_auto = best_block[2]
+            lIdx_auto = best_block[3]
+
+    if tIdx_auto is None:
+        global_peak_idx = int(0.5 * fs) + np.argmax(sf[int(0.5 * fs):])
+        tIdx_auto = max(int(0.5 * fs), global_peak_idx - int(0.2 * fs))
+        lIdx_auto = min(n_samples - 1, tIdx_auto + int(0.4 * fs))
+
+    offset_l, offset_r = 0.0, 0.0
+    if sl_raw is not None and sr_raw is not None and lIdx_auto > tIdx_auto:
+        f_mid_start = tIdx_auto + int((lIdx_auto - tIdx_auto) * 0.25)
+        f_mid_end = tIdx_auto + int((lIdx_auto - tIdx_auto) * 0.75)
+        if f_mid_end > f_mid_start:
+            offset_l = float(np.mean(sl_raw[f_mid_start:f_mid_end]))
+            offset_r = float(np.mean(sr_raw[f_mid_start:f_mid_end]))
+
+    prop_search_start = max(0, tIdx_auto - int(1.5 * fs))
+    peak_prop_idx = prop_search_start + np.argmax(sf[prop_search_start:tIdx_auto]) if tIdx_auto > prop_search_start else max(0, tIdx_auto - 1)
+    bIdx_auto = prop_search_start + np.argmin(sf[prop_search_start:peak_prop_idx]) if peak_prop_idx > prop_search_start else max(0, peak_prop_idx - int(0.2 * fs))
+
+    threshold_bw = max(bw * 0.98, bw - 3 * force_sd)
+    back_search_window = sf[:bIdx_auto]
+    bw_crossings = np.where(back_search_window >= threshold_bw)[0]
+    sIdx_auto = bw_crossings[-1] if len(bw_crossings) > 0 else max(0, bIdx_auto - int(0.4 * fs))
+
+    net_acc = (sf[sIdx_auto:tIdx_auto + 1] - bw) / mass
+    vel_temp = np.zeros(len(net_acc))
+    for k in range(1, len(net_acc)):
+        vel_temp[k] = vel_temp[k - 1] + 0.5 * (net_acc[k - 1] + net_acc[k]) * dt
+
+    b_rel = max(0, bIdx_auto - sIdx_auto)
+    zero_crossings = np.where(vel_temp[b_rel:] >= 0)[0]
+    zIdx_auto = bIdx_auto + zero_crossings[0] if len(zero_crossings) > 0 else bIdx_auto
+
+    lIdx_l, lIdx_r = lIdx_auto, lIdx_auto
+    if sl_raw is not None and sr_raw is not None:
+        sl_zeroed = sl_raw - offset_l
+        sr_zeroed = sr_raw - offset_r
+        for i in range(tIdx_auto + int(0.05 * fs), min(n_samples, tIdx_auto + int(1.2 * fs))):
+            if sl_zeroed[i] >= 15.0:
+                lIdx_l = i
+                break
+        for i in range(tIdx_auto + int(0.05 * fs), min(n_samples, tIdx_auto + int(1.2 * fs))):
+            if sr_zeroed[i] >= 15.0:
+                lIdx_r = i
+                break
+
+    return (
+        min(sIdx_auto, bIdx_auto),
+        min(bIdx_auto, zIdx_auto),
+        min(zIdx_auto, tIdx_auto),
+        min(tIdx_auto, n_samples - 1),
+        min(lIdx_auto, n_samples - 1),
+        lIdx_l, lIdx_r, (offset_l, offset_r)
     )
+
+def calculate_metrics(t: np.ndarray, sf_raw: np.ndarray, sl_raw: np.ndarray, sr_raw: np.ndarray, dt: float, sIdx: int, bIdx: int, zIdx: int, tIdx: int, lIdx: int, filter_type: str = "Butterworth LPF", cutoff: float = 50.0, offsets: Tuple[float, float] = (0.0, 0.0), lIdx_l: Optional[int] = None, lIdx_r: Optional[int] = None, group_by: str = "phase") -> Dict[str, Any]:
+    n_samples = len(sf_raw)
+    fs = 1.0 / dt
+    g = 9.80665
 
     offset_l, offset_r = offsets
-    f_left_zeroed = f_left - offset_l
-    f_right_zeroed = f_right - offset_r
-    f_total_zeroed = f_left_zeroed + f_right_zeroed
+    sl_zeroed = sl_raw - offset_l
+    sr_zeroed = sr_raw - offset_r
+    sf_zeroed = sl_zeroed + sr_zeroed
 
-    sf = apply_signal_filter(f_total_zeroed, filter_type=filter_type, cutoff=cutoff_freq, fs=fs, window_size=filter_size)
-    sl = apply_signal_filter(f_left_zeroed, filter_type=filter_type, cutoff=cutoff_freq, fs=fs, window_size=filter_size)
-    sr = apply_signal_filter(f_right_zeroed, filter_type=filter_type, cutoff=cutoff_freq, fs=fs, window_size=filter_size)
+    sf = apply_signal_filter(sf_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
+    sl = apply_signal_filter(sl_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
+    sr = apply_signal_filter(sr_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
 
-    t_min = float(t[0])
-    t_max = float(t[-1])
-
-    is_file_changed = (st.session_state.get("current_file_sig") != file_signature)
-    
-    if is_file_changed or "t_start" not in st.session_state or st.sidebar.button("🔄 Reset Phases"):
-        st.session_state.t_start = float(t[sIdx_auto])
-        st.session_state.t_braking = float(t[bIdx_auto])
-        st.session_state.t_split = float(t[zIdx_auto])
-        st.session_state.t_takeoff = float(t[tIdx_auto])
-        st.session_state.t_landing = float(t[lIdx_auto])
-        st.session_state.is_confirmed = False
-        st.session_state.current_file_sig = file_signature
-
-    st.session_state.t_start = max(t_min, min(st.session_state.t_start, t_max - 4 * dt_val))
-    st.session_state.t_braking = max(st.session_state.t_start + dt_val, min(st.session_state.t_braking, t_max - 3 * dt_val))
-    st.session_state.t_split = max(st.session_state.t_braking + dt_val, min(st.session_state.t_split, t_max - 2 * dt_val))
-    st.session_state.t_takeoff = max(st.session_state.t_split + dt_val, min(st.session_state.t_takeoff, t_max - dt_val))
-    st.session_state.t_landing = max(st.session_state.t_takeoff + dt_val, min(st.session_state.t_landing, t_max))
-
-    t_start = st.session_state.t_start
-    t_braking = st.session_state.t_braking
-    t_split = st.session_state.t_split
-    t_takeoff = st.session_state.t_takeoff
-    t_landing = st.session_state.t_landing
-
-    total_duration = max(dt_val, t_landing - t_start)
-    pad_time = 0.20 * total_duration
-
-    crop_x_min = max(t_min, t_start - pad_time)
-    crop_x_max = min(t_max, t_landing + pad_time)
-
-    display_x_min = crop_x_min if st.session_state.get("is_confirmed", False) else t_min
-    display_x_max = crop_x_max if st.session_state.get("is_confirmed", False) else t_max
-
-    sIdx = min(max(0, int(round((t_start - t[0]) / dt_val))), n_samples - 1)
-    bIdx = min(max(0, int(round((t_braking - t[0]) / dt_val))), n_samples - 1)
-    zIdx = min(max(0, int(round((t_split - t[0]) / dt_val))), n_samples - 1)
-    tIdx = min(max(0, int(round((t_takeoff - t[0]) / dt_val))), n_samples - 1)
-    lIdx = min(max(0, int(round((t_landing - t[0]) / dt_val))), n_samples - 1)
-
-    report = calculate_metrics(
-        t, f_total, f_left, f_right, dt_val, sIdx, bIdx, zIdx, tIdx, lIdx, 
-        filter_type=filter_type, cutoff=cutoff_freq, offsets=offsets,
-        lIdx_l=lIdx_l, lIdx_r=lIdx_r, group_by=group_mode_param
-    )
-
+    quiet_samples = max(1, min(int(0.5 / dt), n_samples))
     bw = np.mean(sf[:quiet_samples])
-    bw_sd = np.std(sf[:quiet_samples])
+    bw_left = np.mean(sl[:quiet_samples])
+    bw_right = np.mean(sr[:quiet_samples])
     mass = bw / g if bw > 0 else 70.0
 
     vel_total = np.zeros(n_samples)
     disp_total = np.zeros(n_samples)
     net_acc = (sf - bw) / mass
     for i in range(sIdx + 1, min(tIdx + 1, n_samples)):
-        vel_total[i] = vel_total[i - 1] + 0.5 * (net_acc[i - 1] + net_acc[i]) * dt_val
-        disp_total[i] = disp_total[i - 1] + 0.5 * (vel_total[i - 1] + vel_total[i]) * dt_val
+        vel_total[i] = vel_total[i - 1] + 0.5 * (net_acc[i - 1] + net_acc[i]) * dt
+        disp_total[i] = disp_total[i - 1] + 0.5 * (vel_total[i - 1] + vel_total[i]) * dt
 
-    power_total = sf * vel_total
-    power_wkg = power_total / mass
+    contraction_time = max(dt, t[tIdx] - t[sIdx])
+    propulsive_dur = max(0.0, t[tIdx] - t[zIdx])
+    unweight_dur = max(0.0, t[bIdx] - t[sIdx])
+    braking_dur = max(0.0, t[zIdx] - t[bIdx])
+    flight_dur = max(0.0, t[lIdx] - t[tIdx])
 
-    v_to = vel_total[tIdx]
-    flight_dur = max(0.0, t_landing - t_takeoff)
-    jh_imp_val = ((v_to ** 2) / (2.0 * g)) * 100.0
-    jh_flt_val = (g * (flight_dur ** 2)) / 8.0 * 100.0
-    ttt_val = max(dt_val, t_takeoff - t_start)
-    rsi_val = (jh_imp_val / 100.0) / ttt_val if ttt_val > 0 else 0.0
-    ppk_wkg = np.max(power_wkg[zIdx:tIdx+1]) if tIdx > zIdx else 0.0
+    jh_flight = (g * (flight_dur ** 2)) / 8.0 * 100.0
+    v_takeoff = vel_total[tIdx]
+    jh_impulse = ((v_takeoff ** 2) / (2.0 * g)) * 100.0
+    
+    # กำหนดให้คำนวณ RSI modified จาก Impulse-Momentum Method เป็นหลักสากล
+    rsi_modified = (jh_impulse / 100.0) / contraction_time if contraction_time > 0 else 0.0
+    peak_v_prop = np.max(vel_total[zIdx:min(tIdx + 1, n_samples)]) if len(vel_total[zIdx:min(tIdx + 1, n_samples)]) > 0 else 0.0
+    peak_v_neg = np.min(vel_total[sIdx:min(zIdx + 1, n_samples)]) if len(vel_total[sIdx:min(zIdx + 1, n_samples)]) > 0 else 0.0
+
+    unweight_fl = sl[sIdx:min(bIdx + 1, n_samples)]
+    unweight_fr = sr[sIdx:min(bIdx + 1, n_samples)]
+    unweight_impulse = calc_impulse(sf[sIdx:min(bIdx + 1, n_samples)], dt)
+    unweight_impulse_l = calc_impulse(unweight_fl, dt)
+    unweight_impulse_r = calc_impulse(unweight_fr, dt)
+
+    brak_f = sf[bIdx:min(zIdx + 1, n_samples)]
+    brak_fl = sl[bIdx:min(zIdx + 1, n_samples)]
+    brak_fr = sr[bIdx:min(zIdx + 1, n_samples)]
+    brak_v = vel_total[bIdx:min(zIdx + 1, n_samples)]
+    brak_p = brak_f * brak_v
+
+    avg_brak_fl = calc_avg(brak_fl)
+    avg_brak_fr = calc_avg(brak_fr)
+    avg_brak_f = calc_avg(brak_f)
+    avg_brak_p = calc_avg(brak_p)
+    brak_impulse = calc_impulse(brak_f, dt)
+    brak_impulse_l = calc_impulse(brak_fl, dt)
+    brak_impulse_r = calc_impulse(brak_fr, dt)
+
+    rfd_brak_tot = (brak_f[-1] - brak_f[0]) / (len(brak_f) * dt) if len(brak_f) > 1 else 0.0
+    rfd_brak_l = (brak_fl[-1] - brak_fl[0]) / (len(brak_fl) * dt) if len(brak_fl) > 1 else 0.0
+    rfd_brak_r = (brak_fr[-1] - brak_fr[0]) / (len(brak_fr) * dt) if len(brak_fr) > 1 else 0.0
+
+    prop_f = sf[zIdx:min(tIdx + 1, n_samples)]
+    prop_fl = sl[zIdx:min(tIdx + 1, n_samples)]
+    prop_fr = sr[zIdx:min(tIdx + 1, n_samples)]
+    prop_p = prop_f * vel_total[zIdx:min(tIdx + 1, n_samples)]
+
+    avg_prop_fl = calc_avg(prop_fl)
+    avg_prop_fr = calc_avg(prop_fr)
+    avg_prop_f = calc_avg(prop_f)
+    peak_prop_fl = np.max(prop_fl) if len(prop_fl) > 0 else 0.0
+    peak_prop_fr = np.max(prop_fr) if len(prop_fr) > 0 else 0.0
+    peak_prop_f = np.max(prop_f) if len(prop_f) > 0 else 0.0
+
+    peak_brak_fl = np.max(brak_fl) if len(brak_fl) > 0 else 0.0
+    peak_brak_fr = np.max(brak_fr) if len(brak_fr) > 0 else 0.0
+    peak_brak_f = np.max(brak_f) if len(brak_f) > 0 else 0.0
+
+    peak_prop_p = np.max(prop_p) if len(prop_p) > 0 else 0.0
+    avg_prop_p = calc_avg(prop_p)
+
+    prop_impulse = calc_impulse(prop_f, dt)
+    prop_impulse_l = calc_impulse(prop_fl, dt)
+    prop_impulse_r = calc_impulse(prop_fr, dt)
+
+    positive_impulse = brak_impulse + prop_impulse
+    positive_impulse_l = brak_impulse_l + prop_impulse_l
+    positive_impulse_r = brak_impulse_r + prop_impulse_r
+
+    peak_force_idx = np.argmax(sf[sIdx:tIdx + 1]) + sIdx
+    time_to_peak_force = (t[peak_force_idx] - t[sIdx]) * 1000.0
+
+    idx_50ms = min(n_samples, zIdx + int(0.05 / dt))
+    idx_100ms = min(n_samples, zIdx + int(0.10 / dt))
+    p1_imp = calc_impulse(sf[zIdx:idx_50ms] - bw, dt) if idx_50ms > zIdx else 0.0
+    p1_imp_l = calc_impulse(sl[zIdx:idx_50ms] - bw_left, dt) if idx_50ms > zIdx else 0.0
+    p1_imp_r = calc_impulse(sr[zIdx:idx_50ms] - bw_right, dt) if idx_50ms > zIdx else 0.0
+
+    p2_imp = calc_impulse(sf[idx_50ms:idx_100ms] - bw, dt) if idx_100ms > idx_50ms else 0.0
+    p2_imp_l = calc_impulse(sl[idx_50ms:idx_100ms] - bw_left, dt) if idx_100ms > idx_50ms else 0.0
+    p2_imp_r = calc_impulse(sr[idx_50ms:idx_100ms] - bw_right, dt) if idx_100ms > idx_50ms else 0.0
+
+    land_impulse = land_impulse_l = land_impulse_r = 0.0
+    if lIdx > tIdx and lIdx < n_samples:
+        land_end_idx = min(n_samples, lIdx + int(0.5 / dt))
+        land_impulse = calc_impulse(sf[lIdx:land_end_idx], dt)
+        land_impulse_l = calc_impulse(sl[lIdx:land_end_idx], dt)
+        land_impulse_r = calc_impulse(sr[lIdx:land_end_idx], dt)
+
     com_depth = abs(disp_total[zIdx] - disp_total[sIdx]) * 100.0
+    com_takeoff = disp_total[tIdx] * 100.0
+    leg_stiffness = (peak_brak_f / (com_depth / 100.0)) if com_depth > 0 else 0.0
+    flight_jump_ratio = flight_dur / contraction_time if contraction_time > 0 else 0.0
 
-    l_bw = np.mean(sl[:quiet_samples])
-    r_bw = np.mean(sr[:quiet_samples])
-    
-    br_net_l = float(np.trapezoid(sl[bIdx:zIdx+1] - l_bw, dx=dt_val)) if zIdx > bIdx else 0.0
-    br_net_r = float(np.trapezoid(sr[bIdx:zIdx+1] - r_bw, dx=dt_val)) if zIdx > bIdx else 0.0
-    br_gross_l = float(np.trapezoid(sl[bIdx:zIdx+1], dx=dt_val)) if zIdx > bIdx else 0.0
-    br_gross_r = float(np.trapezoid(sr[bIdx:zIdx+1], dx=dt_val)) if zIdx > bIdx else 0.0
-    
-    pr_net_l = float(np.trapezoid(sl[zIdx:tIdx+1] - l_bw, dx=dt_val)) if tIdx > zIdx else 0.0
-    pr_net_r = float(np.trapezoid(sr[zIdx:tIdx+1] - r_bw, dx=dt_val)) if tIdx > zIdx else 0.0
-    pr_gross_l = float(np.trapezoid(sl[zIdx:tIdx+1], dx=dt_val)) if tIdx > zIdx else 0.0
-    pr_gross_r = float(np.trapezoid(sr[zIdx:tIdx+1], dx=dt_val)) if tIdx > zIdx else 0.0
+    touchdown_delay_ms = "-"
+    if lIdx_l is not None and lIdx_r is not None:
+        diff_td = (t[lIdx_l] - t[lIdx_r]) * 1000.0
+        touchdown_delay_ms = f"{diff_td:+.1f} ms"
 
-    pk_br_l = np.max(sl[bIdx:zIdx+1]) if zIdx > bIdx else 0.0
-    pk_br_r = np.max(sr[bIdx:zIdx+1]) if zIdx > bIdx else 0.0
-    pk_pr_l = np.max(sl[zIdx:tIdx+1]) if tIdx > zIdx else 0.0
-    pk_pr_r = np.max(sr[zIdx:tIdx+1]) if tIdx > zIdx else 0.0
+    if group_by == "phase":
+        return {
+            "1. Weighing & Onset Phase": {
+                "Body Mass (kg)": {"Left": f"{bw_left/g:.1f}", "Right": f"{bw_right/g:.1f}", "Total": f"{mass:.1f}", "Deficit": calc_deficit_str(bw_left, bw_right)},
+                "Body Weight (N)": {"Left": f"{bw_left:.0f}", "Right": f"{bw_right:.0f}", "Total": f"{bw:.0f}", "Deficit": calc_deficit_str(bw_left, bw_right)},
+                "Time to Peak Force (ms)": {"Left": "-", "Right": "-", "Total": f"{time_to_peak_force:.0f}", "Deficit": "-"}
+            },
+            "2. Unweighting Phase": {
+                "Unloading Duration (s)": {"Left": "-", "Right": "-", "Total": f"{unweight_dur:.3f}", "Deficit": "-"},
+                "Unloading Impulse (N·s)": {"Left": f"{unweight_impulse_l:.0f}", "Right": f"{unweight_impulse_r:.0f}", "Total": f"{unweight_impulse:.0f}", "Deficit": calc_deficit_str(unweight_impulse_l, unweight_impulse_r)},
+                "Peak Negative Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{peak_v_neg:.2f}", "Deficit": "-"}
+            },
+            "3. Braking (Eccentric) Phase": {
+                "Braking Duration (s)": {"Left": "-", "Right": "-", "Total": f"{braking_dur:.3f}", "Deficit": "-"},
+                "Peak Force during Braking Phase (N)": {"Left": f"{peak_brak_fl:.0f}", "Right": f"{peak_brak_fr:.0f}", "Total": f"{peak_brak_f:.0f}", "Deficit": calc_deficit_str(peak_brak_fl, peak_brak_fr)},
+                "Mean Force during Braking Phase (N)": {"Left": f"{avg_brak_fl:.0f}", "Right": f"{avg_brak_fr:.0f}", "Total": f"{avg_brak_f:.0f}", "Deficit": calc_deficit_str(avg_brak_fl, avg_brak_fr)},
+                "Braking Impulse (N·s)": {"Left": f"{brak_impulse_l:.0f}", "Right": f"{brak_impulse_r:.0f}", "Total": f"{brak_impulse:.0f}", "Deficit": calc_deficit_str(brak_impulse_l, brak_impulse_r)},
+                "Eccentric Braking RFD (N/s)": {"Left": f"{rfd_brak_l:.0f}", "Right": f"{rfd_brak_r:.0f}", "Total": f"{rfd_brak_tot:.0f}", "Deficit": calc_deficit_str(rfd_brak_l, rfd_brak_r)},
+                "Mean Power during Braking Phase (W)": {"Left": "-", "Right": "-", "Total": f"{abs(avg_brak_p):.0f}", "Deficit": "-"}
+            },
+            "4. Propulsive (Concentric) Phase": {
+                "Propulsive Phase Duration (s)": {"Left": "-", "Right": "-", "Total": f"{propulsive_dur:.3f}", "Deficit": "-"},
+                "Peak Force during Propulsive Phase (N)": {"Left": f"{peak_prop_fl:.0f}", "Right": f"{peak_prop_fr:.0f}", "Total": f"{peak_prop_f:.0f}", "Deficit": calc_deficit_str(peak_prop_fl, peak_prop_fr)},
+                "Mean Force during Propulsive Phase (N)": {"Left": f"{avg_prop_fl:.0f}", "Right": f"{avg_prop_fr:.0f}", "Total": f"{avg_prop_f:.0f}", "Deficit": calc_deficit_str(avg_prop_fl, avg_prop_fr)},
+                "Propulsive Impulse (N·s)": {"Left": f"{prop_impulse_l:.0f}", "Right": f"{prop_impulse_r:.0f}", "Total": f"{prop_impulse:.0f}", "Deficit": calc_deficit_str(prop_impulse_l, prop_impulse_r)},
+                "Peak Propulsive Power (W)": {"Left": "-", "Right": "-", "Total": f"{peak_prop_p:.0f}", "Deficit": "-"},
+                "Mean Propulsive Power (W)": {"Left": "-", "Right": "-", "Total": f"{avg_prop_p:.0f}", "Deficit": "-"},
+                "P1 Concentric Impulse (0-50ms) (N·s)": {"Left": f"{p1_imp_l:.1f}", "Right": f"{p1_imp_r:.1f}", "Total": f"{p1_imp:.1f}", "Deficit": calc_deficit_str(p1_imp_l, p1_imp_r)},
+                "P2 Concentric Impulse (50-100ms) (N·s)": {"Left": f"{p2_imp_l:.1f}", "Right": f"{p2_imp_r:.1f}", "Total": f"{p2_imp:.1f}", "Deficit": calc_deficit_str(p2_imp_l, p2_imp_r)}
+            },
+            "5. Flight & Performance Phase": {
+                "Jump Height - Impulse-Momentum (cm)": {"Left": "-", "Right": "-", "Total": f"{jh_impulse:.1f}", "Deficit": "-"},
+                "Jump Height - Flight Time (cm)": {"Left": "-", "Right": "-", "Total": f"{jh_flight:.1f}", "Deficit": "-"},
+                "Flight Phase Duration (s)": {"Left": "-", "Right": "-", "Total": f"{flight_dur:.3f}", "Deficit": "-"},
+                "Take-off Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{v_takeoff:.2f}", "Deficit": "-"},
+                "Peak Propulsive Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{peak_v_prop:.2f}", "Deficit": "-"},
+                "RSI Modified (AU)": {"Left": "-", "Right": "-", "Total": f"{rsi_modified:.2f}", "Deficit": "-"},
+                "Positive Impulse (N·s)": {"Left": f"{positive_impulse_l:.0f}", "Right": f"{positive_impulse_r:.0f}", "Total": f"{positive_impulse:.0f}", "Deficit": calc_deficit_str(positive_impulse_l, positive_impulse_r)},
+                "COM Height at Take-off (cm)": {"Left": "-", "Right": "-", "Total": f"{com_takeoff:.1f}", "Deficit": "-"}
+            },
+            "6. Landing & Strategy Phase": {
+                "Landing Impulse (N·s)": {"Left": f"{land_impulse_l:.0f}", "Right": f"{land_impulse_r:.0f}", "Total": f"{land_impulse:.0f}", "Deficit": calc_deficit_str(land_impulse_l, land_impulse_r)},
+                "Initial Touchdown Delay (L-R)": {"Left": f"{t[lIdx_l]:.3f} s" if lIdx_l else "-", "Right": f"{t[lIdx_r]:.3f} s" if lIdx_r else "-", "Total": touchdown_delay_ms, "Deficit": "-"},
+                "Countermovement Center of Mass Depth (cm)": {"Left": "-", "Right": "-", "Total": f"{com_depth:.1f}", "Deficit": "-"},
+                "Leg Stiffness (N/m)": {"Left": "-", "Right": "-", "Total": f"{leg_stiffness:.0f}" if leg_stiffness > 0 else "N/A", "Deficit": "-"},
+                "Flight Time to Jump Time Ratio (AU)": {"Left": "-", "Right": "-", "Total": f"{flight_jump_ratio:.2f}", "Deficit": "-"}
+            }
+        }
 
-    avg_rfd_br_l = (pk_br_l - sl[bIdx]) / ((zIdx - bIdx) * dt_val) if zIdx > bIdx else 0.0
-    avg_rfd_br_r = (pk_br_r - sr[bIdx]) / ((zIdx - bIdx) * dt_val) if zIdx > bIdx else 0.0
-    avg_rfd_pr_l = (pk_pr_l - sl[zIdx]) / ((tIdx - zIdx) * dt_val) if tIdx > zIdx else 0.0
-    avg_rfd_pr_r = (pk_pr_r - sr[zIdx]) / ((tIdx - zIdx) * dt_val) if tIdx > zIdx else 0.0
-
-    win_rfd_br_l = calc_max_win_rfd(sl, bIdx, zIdx, dt_val, 20)
-    win_rfd_br_r = calc_max_win_rfd(sr, bIdx, zIdx, dt_val, 20)
-    win_rfd_pr_l = calc_max_win_rfd(sl, zIdx, tIdx, dt_val, 20)
-    win_rfd_pr_r = calc_max_win_rfd(sr, zIdx, tIdx, dt_val, 20)
-
-    rfd50_br_l = calc_rfd_start(sl, bIdx, dt_val, 50)
-    rfd50_br_r = calc_rfd_start(sr, bIdx, dt_val, 50)
-    rfd100_br_l = calc_rfd_start(sl, bIdx, dt_val, 100)
-    rfd100_br_r = calc_rfd_start(sr, bIdx, dt_val, 100)
-    rfd200_br_l = calc_rfd_start(sl, bIdx, dt_val, 200)
-    rfd200_br_r = calc_rfd_start(sr, bIdx, dt_val, 200)
-
-    rfd50_pr_l = calc_rfd_start(sl, zIdx, dt_val, 50)
-    rfd50_pr_r = calc_rfd_start(sr, zIdx, dt_val, 50)
-    rfd100_pr_l = calc_rfd_start(sl, zIdx, dt_val, 100)
-    rfd100_pr_r = calc_rfd_start(sr, zIdx, dt_val, 100)
-    rfd200_pr_l = calc_rfd_start(sl, zIdx, dt_val, 200)
-    rfd200_pr_r = calc_rfd_start(sr, zIdx, dt_val, 200)
-
-    land_search_end = min(n_samples, lIdx + int(0.5 / dt_val))
-    pk_land_tot = np.max(sf[lIdx:land_search_end]) if land_search_end > lIdx else 0.0
-    pk_land_l = np.max(sl[lIdx:land_search_end]) if land_search_end > lIdx else 0.0
-    pk_land_r = np.max(sr[lIdx:land_search_end]) if land_search_end > lIdx else 0.0
-    ttp_land_ms = (np.argmax(sf[lIdx:land_search_end]) * dt_val) * 1000.0 if land_search_end > lIdx else 0.0
-    
-    imp_250_end = min(n_samples, lIdx + int(0.25 / dt_val))
-    land_imp_250_l = float(np.trapezoid(sl[lIdx:imp_250_end], dx=dt_val)) if imp_250_end > lIdx else 0.0
-    land_imp_250_r = float(np.trapezoid(sr[lIdx:imp_250_end], dx=dt_val)) if imp_250_end > lIdx else 0.0
-    land_imp_250_tot = land_imp_250_l + land_imp_250_r
-
-    pk_idx = lIdx + np.argmax(sf[lIdx:land_search_end]) if land_search_end > lIdx else lIdx
-    f_20 = 0.20 * pk_land_tot
-    f_80 = 0.80 * pk_land_tot
-    sub_land = sf[lIdx:pk_idx+1]
-    idx_20 = np.where(sub_land >= f_20)[0]
-    idx_80 = np.where(sub_land >= f_80)[0]
-    load_rate = (f_80 - f_20) / ((idx_80[0] - idx_20[0]) * dt_val) if len(idx_20) > 0 and len(idx_80) > 0 and idx_80[0] > idx_20[0] else 0.0
-
-    mean_br_f = np.mean(sf[bIdx:zIdx+1]) if zIdx > bIdx else 0.0
-    mean_pr_f = np.mean(sf[zIdx:tIdx+1]) if tIdx > zIdx else 0.0
-    mean_br_p = np.mean(power_wkg[bIdx:zIdx+1]) if zIdx > bIdx else 0.0
-    mean_pr_p = np.mean(power_wkg[zIdx:tIdx+1]) if tIdx > zIdx else 0.0
-    pos_net_imp = float(np.trapezoid(np.maximum(0, sf[sIdx:tIdx+1] - bw), dx=dt_val))
-    leg_stiff = (pk_br_l + pk_br_r) / (com_depth / 100.0) if com_depth > 0 else 0.0
-
-    p_asym_txt, _ = asym_badge(pr_net_l, pr_net_r)
-    l_asym_txt, _ = asym_badge(pk_land_l, pk_land_r)
-    p_diff = ((pr_net_l - pr_net_r) / max(pr_net_l, pr_net_r, 1e-6)) * 100.0
-    l_diff = ((pk_land_l - pk_land_r) / max(pk_land_l, pk_land_r, 1e-6)) * 100.0
-
-    if abs(p_diff) < 10 and abs(l_diff) >= 15:
-        headline = f"Take-off net impulse สมดุล แต่ peak landing load เอนไปทาง {'Left' if l_diff > 0 else 'Right'}"
-    elif abs(p_diff) >= 15:
-        headline = f"พบ directional asymmetry ใน propulsion net impulse ไปทาง {'Left' if p_diff > 0 else 'Right'}"
-    else:
-        headline = "การแบ่งแรงซ้าย–ขวาช่วง propulsion อยู่ในช่วงค่อนข้างสมดุลของ trial นี้"
-
-    sens_res = {}
-    for fc_test, name in [(None, "raw"), (20.0, "20"), (30.0, "30"), (50.0, "50")]:
-        filt_sf = f_total_zeroed if fc_test is None else apply_signal_filter(f_total_zeroed, "Butterworth LPF", cutoff=fc_test, fs=fs)
-        net_a = (filt_sf - bw) / mass
-        v_test = np.zeros(n_samples)
-        for k in range(sIdx + 1, min(tIdx + 1, n_samples)):
-            v_test[k] = v_test[k-1] + 0.5 * (net_a[k-1] + net_a[k]) * dt_val
-        
-        jh_t = ((v_test[tIdx] ** 2) / (2.0 * g)) * 100.0
-        imp_t = float(np.trapezoid(filt_sf[zIdx:tIdx+1] - bw, dx=dt_val)) if tIdx > zIdx else 0.0
-        pk_t = float(np.max(filt_sf[zIdx:tIdx+1])) if tIdx > zIdx else 0.0
-        land_t = float(np.max(filt_sf[lIdx:land_search_end])) if land_search_end > lIdx else 0.0
-        rfd_t = calc_max_win_rfd(filt_sf, zIdx, tIdx, dt_val, 20)
-
-        sens_res[name] = {"jh": jh_t, "imp": imp_t, "pk": pk_t, "land": land_t, "rfd": rfd_t}
-
-    def calc_spread(vals):
-        mx, mn = max(vals), min(vals)
-        mid = (abs(mx) + abs(mn)) / 2.0
-        return (abs(mx - mn) / mid * 100.0) if mid > 0 else 0.0
-
-    # -------------------------------------------------------------
-    # UI Section: Top KPI Scorecards (Coach Theme Only)
-    # -------------------------------------------------------------
-    if "Coach" in app_theme:
-        k1, k2, k3, k4 = st.columns(4)
-        with k1:
-            st.markdown(f'<div class="kpi-card"><div class="kpi-sub">JUMP HEIGHT (IMPULSE)</div><div class="kpi-metric">{jh_imp_val:.1f} cm</div><div class="kpi-sub">preferred kinetics estimate</div></div>', unsafe_allow_html=True)
-        with k2:
-            st.markdown(f'<div class="kpi-card"><div class="kpi-sub">JUMP HEIGHT (FLIGHT)</div><div class="kpi-metric">{jh_flt_val:.1f} cm</div><div class="kpi-sub">quality-check estimate</div></div>', unsafe_allow_html=True)
-        with k3:
-            st.markdown(f'<div class="kpi-card"><div class="kpi-sub">RSImod</div><div class="kpi-metric">{rsi_val:.2f} m/s</div><div class="kpi-sub">JH (m) / time-to-take-off (s)</div></div>', unsafe_allow_html=True)
-        with k4:
-            st.markdown(f'<div class="kpi-card"><div class="kpi-sub">PEAK CONCENTRIC POWER</div><div class="kpi-metric">{ppk_wkg:.1f} W/kg</div><div class="kpi-sub">{ppk_wkg*mass:.0f} W Total</div></div>', unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
-
-    # -------------------------------------------------------------
-    # UI Section: Interactive Force-Time Plot
-    # -------------------------------------------------------------
-    if "Coach" in app_theme:
-        col_g, col_s = st.columns([8, 4])
-    else:
-        col_g = st.container()
-
-    with col_g:
-        fig_force = go.Figure()
-        fig_force.add_trace(go.Scatter(x=t, y=sl, name="Left", line=dict(color=col_l_hex, width=1.1 if "Coach" in app_theme else 0.8)))
-        fig_force.add_trace(go.Scatter(x=t, y=sr, name="Right", line=dict(color=col_r_hex, width=1.1 if "Coach" in app_theme else 0.8)))
-        fig_force.add_trace(go.Scatter(x=t, y=sf, name="Total", line=dict(color=col_tot_hex, width=1.8 if "Coach" in app_theme else 1.2)))
-
-        fig_force.add_vrect(x0=t_start, x1=t_braking, fillcolor="rgba(234, 179, 8, 0.12)", line_width=0)
-        fig_force.add_vrect(x0=t_braking, x1=t_split, fillcolor="rgba(239, 68, 68, 0.12)", line_width=0)
-        fig_force.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="rgba(34, 197, 94, 0.12)", line_width=0)
-        fig_force.add_vrect(x0=t_takeoff, x1=t_landing, fillcolor="rgba(148, 163, 184, 0.12)", line_width=0)
-
-        fig_force.add_vline(x=t_start, line_width=1.5, line_dash="dash", line_color="#ca8a04")
-        fig_force.add_vline(x=t_braking, line_width=1.5, line_dash="dash", line_color="#ef4444")
-        fig_force.add_vline(x=t_split, line_width=1.5, line_dash="dash", line_color="#22c55e")
-        fig_force.add_vline(x=t_takeoff, line_width=1.5, line_dash="dash", line_color="#dc2626")
-        fig_force.add_vline(x=t_landing, line_width=1.5, line_dash="dash", line_color="#0284c7")
-
-        max_y = float(np.max(sf)) * 1.15 if len(sf) > 0 else 3000.0
-        fig_force.add_annotation(x=(t_start+t_braking)/2, y=max_y*0.98, text="Unweight", showarrow=False, font=dict(size=11, color="#ca8a04", family="Arial Bold"))
-        fig_force.add_annotation(x=(t_braking+t_split)/2, y=max_y*0.90, text="Braking", showarrow=False, font=dict(size=11, color="#ef4444", family="Arial Bold"))
-        fig_force.add_annotation(x=(t_split+t_takeoff)/2, y=max_y*0.98, text="Propulsion", showarrow=False, font=dict(size=11, color="#22c55e", family="Arial Bold"))
-        fig_force.add_annotation(x=(t_takeoff+t_landing)/2, y=max_y*0.90, text="Flight", showarrow=False, font=dict(size=11, color="#64748b", family="Arial Bold"))
-
-        github_base = "https://raw.githubusercontent.com/RatTongiam/Force-Analysis/main"
-        pictograms = [
-            {"url": f"{github_base}/Standing.png", "x": max(display_x_min + 0.1, t_start - 0.2)},
-            {"url": f"{github_base}/UP.png", "x": (t_start + t_braking) / 2.0},
-            {"url": f"{github_base}/BP.png", "x": (t_braking + t_split) / 2.0},
-            {"url": f"{github_base}/PP.png", "x": (t_split + t_takeoff) / 2.0},
-            {"url": f"{github_base}/FP.png", "x": (t_takeoff + t_landing) / 2.0},
-            {"url": f"{github_base}/LP.png", "x": min(t_max, t_landing + 0.2)},
-        ]
-        for pic in pictograms:
-            fig_force.add_layout_image(
-                dict(
-                    source=pic["url"], xref="x", yref="y", x=pic["x"], y=max_y * 0.75,
-                    sizex=0.15, sizey=max_y * 0.22, xanchor="center", yanchor="bottom", layer="above"
-                )
-            )
-
-        fig_force.update_layout(
-            title="FORCE-TIME ANALYSIS & SUB-PHASES" if "Classic" in app_theme else "Interactive vertical force–time curve",
-            xaxis_title="Time (s)", yaxis_title="Force (N)",
-            height=460, margin=dict(l=40, r=40, t=50, b=20)
-        )
-        fig_force.update_xaxes(range=[display_x_min, display_x_max])
-        st.plotly_chart(fig_force, width="stretch")
-
-    if "Coach" in app_theme:
-        with col_s:
-            st.markdown("### Coach snapshot")
-            st.markdown(f"""
-            <div class="coach-box">
-                <b>{headline}</b><br><br>
-                JH {jh_imp_val:.1f} cm • RSImod {rsi_val:.2f} m/s • Propulsion net impulse asymmetry {abs(p_diff):.1f}% • Landing peak asymmetry {abs(l_diff):.1f}%.
-            </div>
-            """, unsafe_allow_html=True)
-            st.markdown(f'<div class="coach-action">Propulsion net impulse สมดุลใน trial นี้ใช้เป็น baseline เพื่อติดตาม fatigue / RTP ได้</div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="coach-action">ใช้ค่าเฉลี่ย 3–5 valid trials และ CV% ก่อนสรุป pattern ระยะยาว</div>', unsafe_allow_html=True)
-
-    # -------------------------------------------------------------
-    # UI Section: Timeline Sliders
-    # -------------------------------------------------------------
-    st.markdown("##### 🎚️ Phase Boundary Timeline Controls")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1:
-        v1_min, v1_max = t_min, max(t_min + dt_val, t_braking - dt_val)
-        new_start = st.slider("1. Start Onset (s)", min_value=v1_min, max_value=v1_max, value=max(v1_min, min(st.session_state.t_start, v1_max)), step=dt_val, format="%.3f", key="s_1")
-    with c2:
-        v2_min, v2_max = max(t_min + dt_val, new_start + dt_val), max(t_min + 2*dt_val, t_split - dt_val)
-        new_braking = st.slider("2. Braking (s)", min_value=v2_min, max_value=v2_max, value=max(v2_min, min(st.session_state.t_braking, v2_max)), step=dt_val, format="%.3f", key="s_2")
-    with c3:
-        v3_min, v3_max = max(t_min + 2*dt_val, new_braking + dt_val), max(t_min + 3*dt_val, t_takeoff - dt_val)
-        new_split = st.slider("3. Propulsive V=0 (s)", min_value=v3_min, max_value=v3_max, value=max(v3_min, min(st.session_state.t_split, v3_max)), step=dt_val, format="%.3f", key="s_3")
-    with c4:
-        v4_min, v4_max = max(t_min + 3*dt_val, new_split + dt_val), max(t_min + 4*dt_val, t_landing - dt_val)
-        new_takeoff = st.slider("4. Take-off (s)", min_value=v4_min, max_value=v4_max, value=max(v4_min, min(st.session_state.t_takeoff, v4_max)), step=dt_val, format="%.3f", key="s_4")
-    with c5:
-        v5_min, v5_max = max(t_min + 4*dt_val, new_takeoff + dt_val), t_max
-        new_landing = st.slider("5. Landing (s)", min_value=v5_min, max_value=v5_max, value=max(v5_min, min(st.session_state.t_landing, v5_max)), step=dt_val, format="%.3f", key="s_5")
-
-    if (new_start, new_braking, new_split, new_takeoff, new_landing) != (t_start, t_braking, t_split, t_takeoff, t_landing):
-        st.session_state.t_start = new_start
-        st.session_state.t_braking = new_braking
-        st.session_state.t_split = new_split
-        st.session_state.t_takeoff = new_takeoff
-        st.session_state.t_landing = new_landing
-        st.rerun()
-
-    col_btn1, _ = st.columns([1, 4])
-    with col_btn1:
-        if not st.session_state.get("is_confirmed", False):
-            if st.button("✅ Confirm Phases & Crop Graph", type="primary"):
-                st.session_state.is_confirmed = True
-                st.rerun()
-        else:
-            if st.button("✏️ Edit / Show Full View"):
-                st.session_state.is_confirmed = False
-                st.rerun()
-
-    # -------------------------------------------------------------
-    # UI Section: Modern Coach Analysis Panels (Coach Theme Only)
-    # -------------------------------------------------------------
-    if "Coach" in app_theme:
-        st.markdown("---")
-        cv_val = (bw_sd / bw) * 100.0
-        jh_diff_val = abs(jh_flt_val - jh_imp_val)
-        jh_diff_pct = jh_diff_val / max(jh_imp_val, 1e-6) * 100.0
-        qc_pass = (cv_val < 2.0) and (jh_diff_pct < 10.0)
-
-        # QC Alert Banner Warning
-        if not qc_pass:
-            if jh_diff_pct >= 10.0:
-                st.warning(f"⚠️ **QC Flag (JH Discrepancy > 10%):** ค่าความสูงจากการกระโดดระหว่าง Impulse ({jh_imp_val:.1f} cm) และ Flight ({jh_flt_val:.1f} cm) มีความต่างกัน {jh_diff_pct:.1f}% กรุณาตรวจสอบการงอเข่า/ยกขาตอน Landing หรือปรับ Boundary Takeoff/Landing")
-            if cv_val >= 2.0:
-                st.warning(f"⚠️ **QC Flag (Quiet Standing CV > 2.0%):** ค่าความแปรปรวนช่วงยืนนิ่งอยู่ที่ {cv_val:.2f}% ผู้ถูกทดสอบอาจมีการขยับตัวก่อนเริ่ม Jump Initiation")
-
-        r1_c1, r1_c2 = st.columns(2)
-        with r1_c1:
-            st.markdown("### Data quality checks")
-            st.markdown(f'<div class="{"qc-banner-pass" if qc_pass else "qc-banner-review"}">STATUS: {"PASS" if qc_pass else "REVIEW"}</div>', unsafe_allow_html=True)
-            qc_df = pd.DataFrame([
-                {"Check Item": "Sampling", "Value": f"{fs:.0f} Hz", "Status": "Derived from force samples ÷ QTM trial duration"},
-                {"Check Item": "Flight zero-offset", "Value": f"{offset_l:.1f} / {offset_r:.1f} N", "Status": "Constant unloaded residual subtracted L / R"},
-                {"Check Item": "Quiet-standing CV", "Value": f"{cv_val:.2f}%", "Status": f"BW {bw:.2f} N • SD {bw_sd:.2f} N"},
-                {"Check Item": "JH method agreement", "Value": f"{jh_diff_val:.2f} cm", "Status": f"{jh_diff_pct:.1f}% difference: impulse vs flight-time"}
-            ])
-            st.dataframe(qc_df, hide_index=True, width="stretch")
-
-        with r1_c2:
-            st.markdown("### Timing & strategy")
-            strat_df = pd.DataFrame([
-                {"Metric": "Body mass", "Value": f"{mass:.2f} kg"},
-                {"Metric": "Time to take-off", "Value": f"{ttt_val*1000:.0f} ms"},
-                {"Metric": "Unweighting duration", "Value": f"{(t_braking - t_start)*1000:.0f} ms"},
-                {"Metric": "Braking duration", "Value": f"{(t_split - t_braking)*1000:.0f} ms"},
-                {"Metric": "Propulsion duration", "Value": f"{(t_takeoff - t_split)*1000:.0f} ms"},
-                {"Metric": "Flight time", "Value": f"{flight_dur*1000:.0f} ms"},
-                {"Metric": "Countermovement depth", "Value": f"{com_depth:.1f} cm"}
-            ])
-            st.dataframe(strat_df, hide_index=True, width="stretch")
-
-        st.markdown("### Braking / propulsion — Left vs Right")
-        bp_rows = [
-            {"Phase": "Braking", "Metric": "Peak force", "Left": f"{pk_br_l:.0f} N", "Right": f"{pk_br_r:.0f} N", "Directional asymmetry": asym_badge(pk_br_l, pk_br_r)[0]},
-            {"Phase": "Braking", "Metric": "NET impulse", "Left": f"{br_net_l:.1f} N·s", "Right": f"{br_net_r:.1f} N·s", "Directional asymmetry": asym_badge(br_net_l, br_net_r)[0]},
-            {"Phase": "Braking", "Metric": "Gross GRF impulse", "Left": f"{br_gross_l:.1f} N·s", "Right": f"{br_gross_r:.1f} N·s", "Directional asymmetry": asym_badge(br_gross_l, br_gross_r)[0]},
-            {"Phase": "Braking", "Metric": "Average RFD to peak", "Left": f"{avg_rfd_br_l:.0f} N/s", "Right": f"{avg_rfd_br_r:.0f} N/s", "Directional asymmetry": asym_badge(avg_rfd_br_l, avg_rfd_br_r)[0]},
-            {"Phase": "Braking", "Metric": "Max 20 ms RFD", "Left": f"{win_rfd_br_l:.0f} N/s", "Right": f"{win_rfd_br_r:.0f} N/s", "Directional asymmetry": asym_badge(win_rfd_br_l, win_rfd_br_r)[0]},
-            {"Phase": "Braking", "Metric": "RFD 0–50 ms", "Left": f"{rfd50_br_l:.0f} N/s", "Right": f"{rfd50_br_r:.0f} N/s", "Directional asymmetry": asym_badge(rfd50_br_l, rfd50_br_r)[0]},
-            {"Phase": "Braking", "Metric": "RFD 0–100 ms", "Left": f"{rfd100_br_l:.0f} N/s", "Right": f"{rfd100_br_r:.0f} N/s", "Directional asymmetry": asym_badge(rfd100_br_l, rfd100_br_r)[0]},
-            {"Phase": "Braking", "Metric": "RFD 0–200 ms", "Left": f"{rfd200_br_l:.0f} N/s", "Right": f"{rfd200_br_r:.0f} N/s", "Directional asymmetry": asym_badge(rfd200_br_l, rfd200_br_r)[0]},
-            {"Phase": "Propulsion", "Metric": "Peak force", "Left": f"{pk_pr_l:.0f} N", "Right": f"{pk_pr_r:.0f} N", "Directional asymmetry": asym_badge(pk_pr_l, pk_pr_r)[0]},
-            {"Phase": "Propulsion", "Metric": "NET impulse", "Left": f"{pr_net_l:.1f} N·s", "Right": f"{pr_net_r:.1f} N·s", "Directional asymmetry": asym_badge(pr_net_l, pr_net_r)[0]},
-            {"Phase": "Propulsion", "Metric": "Gross GRF impulse", "Left": f"{pr_gross_l:.1f} N·s", "Right": f"{pr_gross_r:.1f} N·s", "Directional asymmetry": asym_badge(pr_gross_l, pr_gross_r)[0]},
-            {"Phase": "Propulsion", "Metric": "Average RFD to peak", "Left": f"{avg_rfd_pr_l:.0f} N/s", "Right": f"{avg_rfd_pr_r:.0f} N/s", "Directional asymmetry": asym_badge(avg_rfd_pr_l, avg_rfd_pr_r)[0]},
-            {"Phase": "Propulsion", "Metric": "Max 20 ms RFD", "Left": f"{win_rfd_pr_l:.0f} N/s", "Right": f"{win_rfd_pr_r:.0f} N/s", "Directional asymmetry": asym_badge(win_rfd_pr_l, win_rfd_pr_r)[0]},
-            {"Phase": "Propulsion", "Metric": "RFD 0–50 ms", "Left": f"{rfd50_pr_l:.0f} N/s", "Right": f"{rfd50_pr_r:.0f} N/s", "Directional asymmetry": asym_badge(rfd50_pr_l, rfd50_pr_r)[0]},
-            {"Phase": "Propulsion", "Metric": "RFD 0–100 ms", "Left": f"{rfd100_pr_l:.0f} N/s", "Right": f"{rfd100_pr_r:.0f} N/s", "Directional asymmetry": asym_badge(rfd100_pr_l, rfd100_pr_r)[0]},
-            {"Phase": "Propulsion", "Metric": "RFD 0–200 ms", "Left": f"{rfd200_pr_l:.0f} N/s", "Right": f"{rfd200_pr_r:.0f} N/s", "Directional asymmetry": asym_badge(rfd200_pr_l, rfd200_pr_r)[0]}
-        ]
-        st.dataframe(pd.DataFrame(bp_rows), hide_index=True, width="stretch")
-
-        rc1, rc2 = st.columns(2)
-        with rc1:
-            fig_v = go.Figure()
-            fig_v.add_trace(go.Scatter(x=t[sIdx:lIdx+1], y=vel_total[sIdx:lIdx+1], line=dict(color="#11395f", width=1.5), name="COM velocity"))
-            fig_v.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
-            fig_v.update_layout(title="COM velocity (m/s)", height=260, margin=dict(l=30, r=30, t=40, b=20))
-            st.plotly_chart(fig_v, width="stretch")
-        with rc2:
-            fig_p = go.Figure()
-            fig_p.add_trace(go.Scatter(x=t[sIdx:tIdx+1], y=power_wkg[sIdx:tIdx+1], line=dict(color="#ed7d31", width=1.5), name="COM power"))
-            fig_p.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
-            fig_p.update_layout(title="COM power (W/kg)", height=260, margin=dict(l=30, r=30, t=40, b=20))
-            st.plotly_chart(fig_p, width="stretch")
-
-        rl1, rl2 = st.columns(2)
-        with rl1:
-            st.markdown("### Landing — Left vs Right")
-            land_rows = [
-                {"Metric": "Peak landing force", "Left": f"{pk_land_l:.0f} N", "Right": f"{pk_land_r:.0f} N", "Directional asymmetry": asym_badge(pk_land_l, pk_land_r)[0]},
-                {"Metric": "Impulse 0–250 ms", "Left": f"{land_imp_250_l:.1f} N·s", "Right": f"{land_imp_250_r:.1f} N·s", "Directional asymmetry": asym_badge(land_imp_250_l, land_imp_250_r)[0]}
-            ]
-            st.dataframe(pd.DataFrame(land_rows), hide_index=True, width="stretch")
-        with rl2:
-            st.markdown("### Total landing load")
-            tot_land_df = pd.DataFrame([
-                {"Metric": "Peak landing force", "Value": f"{pk_land_tot:.0f} N ({pk_land_tot/bw:.2f} ×BW)"},
-                {"Metric": "20–80% loading rate", "Value": f"{load_rate:.0f} N/s ({load_rate/bw:.1f} BW/s)"},
-                {"Metric": "Landing impulse 0–250 ms", "Value": f"{land_imp_250_tot:.1f} N·s"},
-                {"Metric": "Time to peak landing force", "Value": f"{ttp_land_ms:.1f} ms"}
-            ])
-            st.dataframe(tot_land_df, hide_index=True, width="stretch")
-
-        rr1, rr2 = st.columns(2)
-        with rr1:
-            st.markdown("### Research-grade derived metrics")
-            res_df = pd.DataFrame([
-                {"Metric": "Mean braking force", "Value": f"{mean_br_f/mass:.2f} N/kg ({mean_br_f:.0f} N)"},
-                {"Metric": "Mean propulsive force", "Value": f"{mean_pr_f/mass:.2f} N/kg ({mean_pr_f:.0f} N)"},
-                {"Metric": "Positive net impulse", "Value": f"{pos_net_imp/mass:.3f} N·s/kg ({pos_net_imp:.1f} N·s)"},
-                {"Metric": "Leg stiffness (Exploratory)", "Value": f"{leg_stiff/mass:.1f} N/m/kg"}
-            ])
-            st.dataframe(res_df, hide_index=True, width="stretch")
-        with rr2:
-            st.markdown("### Clinical change & limb mapping")
-            clin_df = pd.DataFrame([
-                {"Metric": "Involved propulsion net impulse deficit", "Value": "Select involved limb" if involved_limb=="None / Athlete" else f"{((pr_net_l - pr_net_r)/pr_net_r)*100:+.1f}%"},
-                {"Metric": "Involved landing peak difference", "Value": "Select involved limb" if involved_limb=="None / Athlete" else f"{((pk_land_l - pk_land_r)/pk_land_r)*100:+.1f}%"},
-                {"Metric": "Change from baseline JH", "Value": "No baseline entered" if baseline_jh==0 else f"{((jh_imp_val-baseline_jh)/baseline_jh)*100:+.1f}%"},
-                {"Metric": "Exceeds entered MDC?", "Value": "—" if baseline_jh==0 else ("YES" if abs(((jh_imp_val-baseline_jh)/baseline_jh)*100)>=mdc_pct else "NO")}
-            ])
-            st.dataframe(clin_df, hide_index=True, width="stretch")
-
-        st.markdown("### Filter sensitivity analysis")
-        sens_df = pd.DataFrame([
-            {"Metric": "Jump height (cm)", "Raw": f"{sens_res['raw']['jh']:.1f}", "20 Hz": f"{sens_res['20']['jh']:.1f}", "30 Hz": f"{sens_res['30']['jh']:.1f}", "50 Hz": f"{sens_res['50']['jh']:.1f}", "Max spread": f"{calc_spread([sens_res['raw']['jh'], sens_res['20']['jh'], sens_res['30']['jh'], sens_res['50']['jh']]):.1f}%"},
-            {"Metric": "Propulsive net impulse (N·s)", "Raw": f"{sens_res['raw']['imp']:.1f}", "20 Hz": f"{sens_res['20']['imp']:.1f}", "30 Hz": f"{sens_res['30']['imp']:.1f}", "50 Hz": f"{sens_res['50']['imp']:.1f}", "Max spread": f"{calc_spread([sens_res['raw']['imp'], sens_res['20']['imp'], sens_res['30']['imp'], sens_res['50']['imp']]):.1f}%"},
-            {"Metric": "Peak propulsive force (N)", "Raw": f"{sens_res['raw']['pk']:.0f}", "20 Hz": f"{sens_res['20']['pk']:.0f}", "30 Hz": f"{sens_res['30']['pk']:.0f}", "50 Hz": f"{sens_res['50']['pk']:.0f}", "Max spread": f"{calc_spread([sens_res['raw']['pk'], sens_res['20']['pk'], sens_res['30']['pk'], sens_res['50']['pk']]):.1f}%"},
-            {"Metric": "Peak landing force (N)", "Raw": f"{sens_res['raw']['land']:.0f}", "20 Hz": f"{sens_res['20']['land']:.0f}", "30 Hz": f"{sens_res['30']['land']:.0f}", "50 Hz": f"{sens_res['50']['land']:.0f}", "Max spread": f"{calc_spread([sens_res['raw']['land'], sens_res['20']['land'], sens_res['30']['land'], sens_res['50']['land']]):.1f}%"},
-            {"Metric": "Max-window propulsive RFD (N/s)", "Raw": f"{sens_res['raw']['rfd']:.0f}", "20 Hz": f"{sens_res['20']['rfd']:.0f}", "30 Hz": f"{sens_res['30']['rfd']:.0f}", "50 Hz": f"{sens_res['50']['rfd']:.0f}", "Max spread": f"{calc_spread([sens_res['raw']['rfd'], sens_res['20']['rfd'], sens_res['30']['rfd'], sens_res['50']['rfd']]):.1f}%"}
-        ])
-        st.dataframe(sens_df, hide_index=True, width="stretch")
-
-        st.markdown("### Interpretation for coach")
-        interp_txt = f"""
-        * **Performance:** jump height จาก impulse = **{jh_imp_val:.1f} cm**, flight-time = **{jh_flt_val:.1f} cm**, time-to-take-off = **{ttt_val*1000:.0f} ms**, RSImod = **{rsi_val:.2f} m/s**.
-        * **Braking strategy:** net impulse asymmetry = **{asym_badge(br_net_l, br_net_r)[0]}**. Net impulse เหมาะกับการตีความการเปลี่ยน momentum; gross impulse แสดงไว้แยกเพื่อดู GRF-time exposure.
-        * **Propulsion strategy:** net impulse asymmetry = **{asym_badge(pr_net_l, pr_net_r)[0]}**. ให้ดูร่วมกับ peak force และ RFD ไม่ควรใช้ metric เดียวตัดสิน performance.
-        * **Landing strategy:** peak force asymmetry = **{asym_badge(pk_land_l, pk_land_r)[0]}**; total 20–80% loading rate = **{load_rate/bw:.1f} BW/s**.
-        """
-        st.markdown(interp_txt)
-
-    # -------------------------------------------------------------
-    # 7. Asymmetry % Profile Graph (Always Executed)
-    # -------------------------------------------------------------
-    st.markdown("---")
-    max_sl_sr = np.maximum(sl, sr)
-    deficits = np.where((sf >= 50) & (max_sl_sr > 0), ((sl - sr) / np.maximum(max_sl_sr, 1e-6)) * 100, 0)
-    fig_deficit = go.Figure()
-
-    fig_deficit.add_vrect(x0=t_start, x1=t_braking, fillcolor="rgba(234, 179, 8, 0.12)", line_width=0)
-    fig_deficit.add_vrect(x0=t_braking, x1=t_split, fillcolor="rgba(239, 68, 68, 0.12)", line_width=0)
-    fig_deficit.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="rgba(34, 197, 94, 0.12)", line_width=0)
-    fig_deficit.add_vrect(x0=t_takeoff, x1=t_landing, fillcolor="rgba(148, 163, 184, 0.12)", line_width=0)
-
-    fig_deficit.add_vline(x=t_start, line_width=1.5, line_dash="dash", line_color="#ca8a04")
-    fig_deficit.add_vline(x=t_braking, line_width=1.5, line_dash="dash", line_color="#ef4444")
-    fig_deficit.add_vline(x=t_split, line_width=1.5, line_dash="dash", line_color="#22c55e")
-    fig_deficit.add_vline(x=t_takeoff, line_width=1.5, line_dash="dash", line_color="#dc2626")
-    fig_deficit.add_vline(x=t_landing, line_width=1.5, line_dash="dash", line_color="#0284c7")
-
-    fig_deficit.add_hline(y=0, line_width=1.2, line_color="#6b7280")
-    fig_deficit.add_trace(go.Scatter(x=t, y=deficits, name="Asymmetry", fill='tozeroy', fillcolor='rgba(17, 57, 95, 0.15)' if "Coach" in app_theme else 'rgba(77, 41, 148, 0.15)', line=dict(color=col_tot_hex, width=1.5)))
-    fig_deficit.add_hrect(y0=-threshold_alert, y1=threshold_alert, fillcolor="rgba(34, 197, 94, 0.15)", line_width=0)
-
-    fig_deficit.add_annotation(
-        xref="paper", yref="y", x=0.01, y=38, text="<b>← Left Dominant (L > R)</b>", showarrow=False,
-        font=dict(size=11, color=col_l_hex), bgcolor="rgba(255, 255, 255, 0.8)", bordercolor=col_l_hex, borderwidth=1
-    )
-    fig_deficit.add_annotation(
-        xref="paper", yref="y", x=0.01, y=-38, text="<b>← Right Dominant (R > L)</b>", showarrow=False,
-        font=dict(size=11, color=col_r_hex), bgcolor="rgba(255, 255, 255, 0.8)", bordercolor=col_r_hex, borderwidth=1
-    )
-
-    fig_deficit.update_layout(
-        title="L/R ASYMMETRY % (Threshold Alert & Limb Dominance)" if "Classic" in app_theme else "L/R ASYMMETRY % PROFILE (Threshold Alert & Limb Dominance)", 
-        xaxis_title="Time (s)", yaxis_title="Deficit %", 
-        yaxis_range=[-55, 55], height=340, margin=dict(l=40, r=40, t=50, b=20)
-    )
-    fig_deficit.update_xaxes(range=[display_x_min, display_x_max])
-    st.plotly_chart(fig_deficit, width="stretch")
-
-    # -------------------------------------------------------------
-    # 8. Full Report Table & PDF Download (Always Executed)
-    # -------------------------------------------------------------
-    st.markdown(f"### 📋 Full Biomechanical Report ({'Movement Sub-phases' if group_mode_param=='phase' else 'Anicic et al., 2023'})")
-    table_rows = []
-    for phase_name, metrics in report.items():
-        table_rows.append({"Biomechanical Metric": f"=== {phase_name.upper()} ===", "Left": "", "Right": "", "TOTAL": "", "Deficit %": ""})
-        for metric_name, vals in metrics.items():
-            table_rows.append({
-                "Biomechanical Metric": metric_name,
-                "Left": vals["Left"],
-                "Right": vals["Right"],
-                "TOTAL": vals["Total"],
-                "Deficit %": vals["Deficit"]
-            })
-    
-    st.dataframe(pd.DataFrame(table_rows), width="stretch", hide_index=True)
-
-    # Package Coach PDF Context
-    coach_pdf_context = {
-        "jh_imp": f"{jh_imp_val:.1f}", "jh_flt": f"{jh_flt_val:.1f}", "rsi": f"{rsi_val:.2f}", "ppk": f"{ppk_wkg:.1f}",
-        "headline": "Bilateral propulsion net impulse is balanced in this trial." if abs(p_diff) < 10 else f"Directional asymmetry in propulsion net impulse ({abs(p_diff):.1f}%).",
-        "sub": f"JH {jh_imp_val:.1f} cm • RSImod {rsi_val:.2f} m/s • Propulsion Asym {abs(p_diff):.1f}% • Landing Asym {abs(l_diff):.1f}%.",
-        "act1": "Propulsion net impulse is balanced; use as baseline for fatigue monitoring.",
-        "act2": "Use average of 3-5 valid trials and CV% before concluding pattern.",
-        
-        "pk_br_l": f"{pk_br_l:.0f}", "pk_br_r": f"{pk_br_r:.0f}", "asym_pk_br": asym_badge(pk_br_l, pk_br_r)[0],
-        "br_net_l": f"{br_net_l:.1f}", "br_net_r": f"{br_net_r:.1f}", "asym_br_net": asym_badge(br_net_l, br_net_r)[0],
-        "br_gross_l": f"{br_gross_l:.1f}", "br_gross_r": f"{br_gross_r:.1f}", "asym_br_gross": asym_badge(br_gross_l, br_gross_r)[0],
-        "avg_rfd_br_l": f"{avg_rfd_br_l:.0f}", "avg_rfd_br_r": f"{avg_rfd_br_r:.0f}", "asym_avg_rfd_br": asym_badge(avg_rfd_br_l, avg_rfd_br_r)[0],
-        "win_rfd_br_l": f"{win_rfd_br_l:.0f}", "win_rfd_br_r": f"{win_rfd_br_r:.0f}", "asym_win_rfd_br": asym_badge(win_rfd_br_l, win_rfd_br_r)[0],
-        "rfd50_br_l": f"{rfd50_br_l:.0f}", "rfd50_br_r": f"{rfd50_br_r:.0f}", "asym_rfd50_br": asym_badge(rfd50_br_l, rfd50_br_r)[0],
-        "rfd100_br_l": f"{rfd100_br_l:.0f}", "rfd100_br_r": f"{rfd100_br_r:.0f}", "asym_rfd100_br": asym_badge(rfd100_br_l, rfd100_br_r)[0],
-        "rfd200_br_l": f"{rfd200_br_l:.0f}", "rfd200_br_r": f"{rfd200_br_r:.0f}", "asym_rfd200_br": asym_badge(rfd200_br_l, rfd200_br_r)[0],
-
-        "pk_pr_l": f"{pk_pr_l:.0f}", "pk_pr_r": f"{pk_pr_r:.0f}", "asym_pk_pr": asym_badge(pk_pr_l, pk_pr_r)[0],
-        "pr_net_l": f"{pr_net_l:.1f}", "pr_net_r": f"{pr_net_r:.1f}", "asym_pr_net": asym_badge(pr_net_l, pr_net_r)[0],
-        "pr_gross_l": f"{pr_gross_l:.1f}", "pr_gross_r": f"{pr_gross_r:.1f}", "asym_pr_gross": asym_badge(pr_gross_l, pr_gross_r)[0],
-        "avg_rfd_pr_l": f"{avg_rfd_pr_l:.0f}", "avg_rfd_pr_r": f"{avg_rfd_pr_r:.0f}", "asym_avg_rfd_pr": asym_badge(avg_rfd_pr_l, avg_rfd_pr_r)[0],
-        "win_rfd_pr_l": f"{win_rfd_pr_l:.0f}", "win_rfd_pr_r": f"{win_rfd_pr_r:.0f}", "asym_win_rfd_pr": asym_badge(win_rfd_pr_l, win_rfd_pr_r)[0],
-        "rfd50_pr_l": f"{rfd50_pr_l:.0f}", "rfd50_pr_r": f"{rfd50_pr_r:.0f}", "asym_rfd50_pr": asym_badge(rfd50_pr_l, rfd50_pr_r)[0],
-        "rfd100_pr_l": f"{rfd100_pr_l:.0f}", "rfd100_pr_r": f"{rfd100_pr_r:.0f}", "asym_rfd100_pr": asym_badge(rfd100_pr_l, rfd100_pr_r)[0],
-        "rfd200_pr_l": f"{rfd200_pr_l:.0f}", "rfd200_pr_r": f"{rfd200_pr_r:.0f}", "asym_rfd200_pr": asym_badge(rfd200_pr_l, rfd200_pr_r)[0],
-
-        "fs": f"{fs:.0f}", "zero_off": f"{offset_l:.1f} / {offset_r:.1f} N",
-        "cv": f"{cv_val:.2f}", "bw": f"{bw:.2f}", "bw_sd": f"{bw_sd:.2f}",
-        "fres": f"{abs(offset_l)+abs(offset_r):.1f}", "fres_l": f"{offset_l:.1f}", "fres_r": f"{offset_r:.1f}",
-        "jh_diff": f"{jh_diff_val:.2f}", "jh_diff_pct": f"{jh_diff_pct:.1f}",
-        "closure": f"{abs(float(np.trapezoid(sf[sIdx:tIdx+1]-bw, dx=dt_val)) - mass*v_to):.4f}",
-        "mass": f"{mass:.2f}", "ttt": f"{ttt_val*1000:.0f}",
-        "d_unw": f"{(t_braking - t_start)*1000:.0f}", "d_brk": f"{(t_split - t_braking)*1000:.0f}",
-        "d_pro": f"{(t_takeoff - t_split)*1000:.0f}", "d_fly": f"{flight_dur*1000:.0f}", "depth": f"{com_depth:.1f}",
-
-        "vel": vel_total[sIdx:lIdx+1], "power": power_wkg[sIdx:tIdx+1],
-
-        "pk_land_l": f"{pk_land_l:.0f}", "pk_land_r": f"{pk_land_r:.0f}", "asym_pk_land": asym_badge(pk_land_l, pk_land_r)[0],
-        "land_imp_l": f"{land_imp_250_l:.1f}", "land_imp_r": f"{land_imp_250_r:.1f}",
-        "pk_land_tot": f"{pk_land_tot:.0f}", "pk_land_bw": f"{pk_land_tot/bw:.2f}",
-        "load_rate": f"{load_rate:.0f}", "load_rate_bw": f"{load_rate/bw:.1f}",
-        "land_imp_250": f"{land_imp_250_tot:.1f}", "ttp_land": f"{ttp_land_ms:.1f}",
-
-        "mean_br_f": f"{mean_br_f/mass:.2f}", "mean_br_f_tot": f"{mean_br_f:.0f}",
-        "mean_pr_f": f"{mean_pr_f/mass:.2f}", "mean_pr_f_tot": f"{mean_pr_f:.0f}",
-        "mean_br_p": f"{abs(mean_br_p):.2f}", "mean_pr_p": f"{mean_pr_p:.2f}",
-        "pos_net_imp_kg": f"{pos_net_imp/mass:.3f}", "pos_net_imp": f"{pos_net_imp:.1f}",
-        "leg_stiff": f"{leg_stiff/mass:.1f}",
-        "inv_prop_def": "Select involved limb" if involved_limb=="None / Athlete" else f"{((pr_net_l - pr_net_r)/pr_net_r)*100:+.1f}%",
-        "inv_land_def": "Select involved limb" if involved_limb=="None / Athlete" else f"{((pk_land_l - pk_land_r)/pk_land_r)*100:+.1f}%",
-        "base_ch": "No baseline entered" if baseline_jh==0 else f"{((jh_imp_val-baseline_jh)/baseline_jh)*100:+.1f}%",
-        "mdc_res": "—" if baseline_jh==0 else ("YES — exceeds MDC" if abs(((jh_imp_val-baseline_jh)/baseline_jh)*100)>=mdc_pct else "NO — within MDC"),
-
-        "sens_jh_raw": f"{sens_res['raw']['jh']:.1f}", "sens_jh_20": f"{sens_res['20']['jh']:.1f}", "sens_jh_30": f"{sens_res['30']['jh']:.1f}", "sens_jh_50": f"{sens_res['50']['jh']:.1f}", "sens_jh_sp": f"{calc_spread([sens_res['raw']['jh'], sens_res['20']['jh'], sens_res['30']['jh'], sens_res['50']['jh']]):.1f}%",
-        "sens_imp_raw": f"{sens_res['raw']['imp']:.1f}", "sens_imp_20": f"{sens_res['20']['imp']:.1f}", "sens_imp_30": f"{sens_res['30']['imp']:.1f}", "sens_imp_50": f"{sens_res['50']['imp']:.1f}", "sens_imp_sp": f"{calc_spread([sens_res['raw']['imp'], sens_res['20']['imp'], sens_res['30']['imp'], sens_res['50']['imp']]):.1f}%",
-        "sens_pk_raw": f"{sens_res['raw']['pk']:.0f}", "sens_pk_20": f"{sens_res['20']['pk']:.0f}", "sens_pk_30": f"{sens_res['30']['pk']:.0f}", "sens_pk_50": f"{sens_res['50']['pk']:.0f}", "sens_pk_sp": f"{calc_spread([sens_res['raw']['pk'], sens_res['20']['pk'], sens_res['30']['pk'], sens_res['50']['pk']]):.1f}%",
-        "sens_land_raw": f"{sens_res['raw']['land']:.0f}", "sens_land_20": f"{sens_res['20']['land']:.0f}", "sens_land_30": f"{sens_res['30']['land']:.0f}", "sens_land_50": f"{sens_res['50']['land']:.0f}", "sens_land_sp": f"{calc_spread([sens_res['raw']['land'], sens_res['20']['land'], sens_res['30']['land'], sens_res['50']['land']]):.1f}%",
-        "sens_rfd_raw": f"{sens_res['raw']['rfd']:.0f}", "sens_rfd_20": f"{sens_res['20']['rfd']:.0f}", "sens_rfd_30": f"{sens_res['30']['rfd']:.0f}", "sens_rfd_50": f"{sens_res['50']['rfd']:.0f}", "sens_rfd_sp": f"{calc_spread([sens_res['raw']['rfd'], sens_res['20']['rfd'], sens_res['30']['rfd'], sens_res['50']['rfd']]):.1f}%",
-    } if "Coach" in app_theme else {}
-
-    pdf_bytes = generate_pdf_report(
-        report, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing,
-        threshold_alert=threshold_alert, crop_x_min=crop_x_min, crop_x_max=crop_x_max,
-        theme=app_theme, coach_context=coach_pdf_context
-    )
-    st.sidebar.markdown("---")
-    st.sidebar.download_button(
-        label="📥 Download PDF Report",
-        data=pdf_bytes,
-        file_name="CMJ_Coach_Analyzer_Report.pdf" if "Coach" in app_theme else "Prima_Motion_CMJ_Report.pdf",
-        mime="application/pdf",
-        key="main_download_btn"
-    )
-else:
-    st.info("Please upload data file(s) to begin analysis.")
+    return {
+        "1. Performance Component (59% Variance)": {
+            "Jump Height - Flight Time (cm)": {"Left": "-", "Right": "-", "Total": f"{jh_flight:.1f}", "Deficit": "-"},
+            "Jump Height - Impulse-Momentum (cm)": {"Left": "-", "Right": "-", "Total": f"{jh_impulse:.1f}", "Deficit": "-"},
+            "Flight Phase Duration (s)": {"Left": "-", "Right": "-", "Total": f"{flight_dur:.3f}", "Deficit": "-"},
+            "Take-off Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{v_takeoff:.2f}", "Deficit": "-"},
+            "Peak Propulsive Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{peak_v_prop:.2f}", "Deficit": "-"},
+            "RSI Modified (AU)": {"Left": "-", "Right": "-", "Total": f"{rsi_modified:.2f}", "Deficit": "-"},
+            "Landing Impulse (N·s)": {"Left": f"{land_impulse_l:.0f}", "Right": f"{land_impulse_r:.0f}", "Total": f"{land_impulse:.0f}", "Deficit": calc_deficit_str(land_impulse_l, land_impulse_r)},
+            "Initial Touchdown Delay (L-R)": {"Left": f"{t[lIdx_l]:.3f} s" if lIdx_l else "-", "Right": f"{t[lIdx_r]:.3f} s" if lIdx_r else "-", "Total": touchdown_delay_ms, "Deficit": "-"},
+            "Peak Propulsive Power (W)": {"Left": "-", "Right": "-", "Total": f"{peak_prop_p:.0f}", "Deficit": "-"},
+            "Mean Propulsive Power (W)": {"Left": "-", "Right": "-", "Total": f"{avg_prop_p:.0f}", "Deficit": "-"},
+            "Propulsive Impulse (N·s)": {"Left": f"{prop_impulse_l:.0f}", "Right": f"{prop_impulse_r:.0f}", "Total": f"{prop_impulse:.0f}", "Deficit": calc_deficit_str(prop_impulse_l, prop_impulse_r)},
+            "Positive Impulse (N·s)": {"Left": f"{positive_impulse_l:.0f}", "Right": f"{positive_impulse_r:.0f}", "Total": f"{positive_impulse:.0f}", "Deficit": calc_deficit_str(positive_impulse_l, positive_impulse_r)},
+            "COM Height at Take-off (cm)": {"Left": "-", "Right": "-", "Total": f"{com_takeoff:.1f}", "Deficit": "-"}
+        },
+        "2. Eccentric Component (16% Variance)": {
+            "Mean Force during Braking Phase (N)": {"Left": f"{avg_brak_fl:.0f}", "Right": f"{avg_brak_fr:.0f}", "Total": f"{avg_brak_f:.0f}", "Deficit": calc_deficit_str(avg_brak_fl, avg_brak_fr)},
+            "Braking Impulse (N·s)": {"Left": f"{brak_impulse_l:.0f}", "Right": f"{brak_impulse_r:.0f}", "Total": f"{brak_impulse:.0f}", "Deficit": calc_deficit_str(brak_impulse_l, brak_impulse_r)},
+            "Eccentric Braking RFD (N/s)": {"Left": f"{rfd_brak_l:.0f}", "Right": f"{rfd_brak_r:.0f}", "Total": f"{rfd_brak_tot:.0f}", "Deficit": calc_deficit_str(rfd_brak_l, rfd_brak_r)},
+            "Mean Power during Braking Phase (W)": {"Left": "-", "Right": "-", "Total": f"{abs(avg_brak_p):.0f}", "Deficit": "-"},
+            "Unloading Impulse (N·s)": {"Left": f"{unweight_impulse_l:.0f}", "Right": f"{unweight_impulse_r:.0f}", "Total": f"{unweight_impulse:.0f}", "Deficit": calc_deficit_str(unweight_impulse_l, unweight_impulse_r)},
+            "Peak Negative Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{peak_v_neg:.2f}", "Deficit": "-"}
+        },
+        "3. Concentric Component (11% Variance)": {
+            "Peak Force during Propulsive Phase (N)": {"Left": f"{peak_prop_fl:.0f}", "Right": f"{peak_prop_fr:.0f}", "Total": f"{peak_prop_f:.0f}", "Deficit": calc_deficit_str(peak_prop_fl, peak_prop_fr)},
+            "Mean Force during Propulsive Phase (N)": {"Left": f"{avg_prop_fl:.0f}", "Right": f"{avg_prop_fr:.0f}", "Total": f"{avg_prop_f:.0f}", "Deficit": calc_deficit_str(avg_prop_fl, avg_prop_fr)},
+            "Peak Force during Braking Phase (N)": {"Left": f"{peak_brak_fl:.0f}", "Right": f"{peak_brak_fr:.0f}", "Total": f"{peak_brak_f:.0f}", "Deficit": calc_deficit_str(peak_brak_fl, peak_brak_fr)},
+            "Time to Peak Force (ms)": {"Left": "-", "Right": "-", "Total": f"{time_to_peak_force:.0f}", "Deficit": "-"},
+            "P1 Concentric Impulse (0-50ms) (N·s)": {"Left": f"{p1_imp_l:.1f}", "Right": f"{p1_imp_r:.1f}", "Total": f"{p1_imp:.1f}", "Deficit": calc_deficit_str(p1_imp_l, p1_imp_r)},
+            "P2 Concentric Impulse (50-100ms) (N·s)": {"Left": f"{p2_imp_l:.1f}", "Right": f"{p2_imp_r:.1f}", "Total": f"{p2_imp:.1f}", "Deficit": calc_deficit_str(p2_imp_l, p2_imp_r)}
+        },
+        "4. Jump Strategy Component (6% Variance)": {
+            "Propulsive Phase Duration (s)": {"Left": "-", "Right": "-", "Total": f"{propulsive_dur:.2f}", "Deficit": "-"},
+            "Countermovement Center of Mass Depth (cm)": {"Left": "-", "Right": "-", "Total": f"{com_depth:.1f}", "Deficit": "-"},
+            "Leg Stiffness (N/m)": {"Left": "-", "Right": "-", "Total": f"{leg_stiffness:.0f}" if leg_stiffness > 0 else "N/A", "Deficit": "-"},
+            "Flight Time to Jump Time Ratio (AU)": {"Left": "-", "Right": "-", "Total": f"{flight_jump_ratio:.2f}", "Deficit": "-"}
+        }
+    }
