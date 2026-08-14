@@ -141,16 +141,24 @@ elif data_mode == "C-Force Performance CSV":
 if t is not None and f_total is not None and len(f_total) > 0:
     dt_val = float(dt) if dt is not None and dt > 0 else 0.001
     fs = 1.0 / dt_val
-    sf = apply_signal_filter(f_total, filter_type=filter_type, cutoff=cutoff_freq, fs=fs, window_size=filter_size)
-    sl = apply_signal_filter(f_left, filter_type=filter_type, cutoff=cutoff_freq, fs=fs, window_size=filter_size)
-    sr = apply_signal_filter(f_right, filter_type=filter_type, cutoff=cutoff_freq, fs=fs, window_size=filter_size)
     
-    n_samples = len(sf)
+    n_samples = len(f_total)
     quiet_samples = max(1, min(int(0.5 / dt_val), n_samples))
 
-    sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto = detect_phases_sequential(
-        t, f_total, dt_val, quiet_samples, filter_type=filter_type, cutoff=cutoff_freq
+    # Phase detection บน RAW Data ชดเชย Flight Drift
+    sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto, lIdx_l, lIdx_r, offsets = detect_phases_sequential(
+        t, f_left, f_right, dt_val, quiet_samples=quiet_samples, filter_type=filter_type, cutoff=cutoff_freq
     )
+
+    offset_l, offset_r = offsets
+    f_left_zeroed = np.maximum(0.0, f_left - offset_l)
+    f_right_zeroed = np.maximum(0.0, f_right - offset_r)
+    f_total_zeroed = f_left_zeroed + f_right_zeroed
+
+    # กรองสัญญาณหลัง Zero Baseline Drift เพื่อพล็อต
+    sf = apply_signal_filter(f_total_zeroed, filter_type=filter_type, cutoff=cutoff_freq, fs=fs, window_size=filter_size)
+    sl = apply_signal_filter(f_left_zeroed, filter_type=filter_type, cutoff=cutoff_freq, fs=fs, window_size=filter_size)
+    sr = apply_signal_filter(f_right_zeroed, filter_type=filter_type, cutoff=cutoff_freq, fs=fs, window_size=filter_size)
 
     t_min = float(t[0])
     t_max = float(t[-1])
@@ -162,30 +170,25 @@ if t is not None and f_total is not None and len(f_total) > 0:
         st.session_state.t_braking = float(t[bIdx_auto])
         st.session_state.t_split = float(t[zIdx_auto])
         st.session_state.t_takeoff = float(t[tIdx_auto])
+        st.session_state.t_landing = float(t[lIdx_auto])
         st.session_state.is_confirmed = False
         st.session_state.current_file_sig = file_signature
 
     # Strict Order Safeguard
-    st.session_state.t_start = max(t_min, min(st.session_state.t_start, t_max - 3 * dt_val))
-    st.session_state.t_braking = max(st.session_state.t_start + dt_val, min(st.session_state.t_braking, t_max - 2 * dt_val))
-    st.session_state.t_split = max(st.session_state.t_braking + dt_val, min(st.session_state.t_split, t_max - dt_val))
-    st.session_state.t_takeoff = max(st.session_state.t_split + dt_val, min(st.session_state.t_takeoff, t_max))
+    st.session_state.t_start = max(t_min, min(st.session_state.t_start, t_max - 4 * dt_val))
+    st.session_state.t_braking = max(st.session_state.t_start + dt_val, min(st.session_state.t_braking, t_max - 3 * dt_val))
+    st.session_state.t_split = max(st.session_state.t_braking + dt_val, min(st.session_state.t_split, t_max - 2 * dt_val))
+    st.session_state.t_takeoff = max(st.session_state.t_split + dt_val, min(st.session_state.t_takeoff, t_max - dt_val))
+    st.session_state.t_landing = max(st.session_state.t_takeoff + dt_val, min(st.session_state.t_landing, t_max))
 
     t_start = st.session_state.t_start
     t_braking = st.session_state.t_braking
     t_split = st.session_state.t_split
     t_takeoff = st.session_state.t_takeoff
-
-    t_curr_landing = min(t_max, t_takeoff + 0.5) 
-    takeoff_idx = min(n_samples - 1, max(0, int(round((t_takeoff - t_min) / dt_val))))
-    airborne_frames = np.where((np.arange(n_samples) >= takeoff_idx) & (sf < 25.0))[0]
-    if len(airborne_frames) > 0:
-        non_air = np.where((np.arange(n_samples) > airborne_frames[0]) & (sf >= 25.0))[0]
-        if len(non_air) > 0:
-            t_curr_landing = float(t[non_air[0]])
+    t_landing = st.session_state.t_landing
 
     crop_x_min = max(t_min, t_start - 1.0)
-    crop_x_max = min(t_max, t_takeoff + 1.5)
+    crop_x_max = min(t_max, t_landing + 1.0)
 
     if not st.session_state.get("is_confirmed", False):
         display_x_min = t_min
@@ -204,24 +207,27 @@ if t is not None and f_total is not None and len(f_total) > 0:
     fig_force.add_vrect(x0=t_start, x1=t_braking, fillcolor="rgba(234, 179, 8, 0.12)", line_width=0)
     fig_force.add_vrect(x0=t_braking, x1=t_split, fillcolor="rgba(239, 68, 68, 0.12)", line_width=0)
     fig_force.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="rgba(34, 197, 94, 0.12)", line_width=0)
+    fig_force.add_vrect(x0=t_takeoff, x1=t_landing, fillcolor="rgba(148, 163, 184, 0.12)", line_width=0)
 
     # Vertical Phase Boundary Lines
     fig_force.add_vline(x=t_start, line_width=1.5, line_dash="dash", line_color="#ca8a04")
     fig_force.add_vline(x=t_braking, line_width=1.5, line_dash="dash", line_color="#ef4444")
     fig_force.add_vline(x=t_split, line_width=1.5, line_dash="dash", line_color="#22c55e")
     fig_force.add_vline(x=t_takeoff, line_width=1.5, line_dash="dash", line_color="#dc2626")
+    fig_force.add_vline(x=t_landing, line_width=1.5, line_dash="dash", line_color="#0284c7")
 
     mid_unweight = (t_start + t_braking) / 2.0
     mid_brake = (t_braking + t_split) / 2.0
     mid_prop = (t_split + t_takeoff) / 2.0
-    mid_flight = (t_takeoff + t_curr_landing) / 2.0
-    mid_landing = min(t_max, t_curr_landing + 0.2)
+    mid_flight = (t_takeoff + t_landing) / 2.0
+    mid_landing = min(t_max, t_landing + 0.2)
 
     max_y = float(np.max(sf)) * 1.15 if len(sf) > 0 else 3000.0
 
     fig_force.add_annotation(x=mid_unweight, y=max_y * 0.98, text="Unweighting", showarrow=False, font=dict(size=11, color="#ca8a04", family="Arial Bold"))
     fig_force.add_annotation(x=mid_brake, y=max_y * 0.90, text="Braking", showarrow=False, font=dict(size=11, color="#ef4444", family="Arial Bold"))
     fig_force.add_annotation(x=mid_prop, y=max_y * 0.98, text="Propulsive", showarrow=False, font=dict(size=11, color="#22c55e", family="Arial Bold"))
+    fig_force.add_annotation(x=mid_flight, y=max_y * 0.90, text="Flight", showarrow=False, font=dict(size=11, color="#64748b", family="Arial Bold"))
 
     github_base = "https://raw.githubusercontent.com/RatTongiam/Force-Analysis/main"
 
@@ -261,10 +267,10 @@ if t is not None and f_total is not None and len(f_total) > 0:
     
     st.plotly_chart(fig_force, width="stretch")
 
-    # 2. PHASE BOUNDARY TIMELINE CONTROLS (CLEAN SLIDER INTERFACE)
+    # 2. PHASE BOUNDARY TIMELINE CONTROLS (5 SLIDERS)
     st.markdown("##### 🎚️ Phase Boundary Timeline Controls")
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
 
     with c1:
         v1_min = t_min
@@ -286,15 +292,22 @@ if t is not None and f_total is not None and len(f_total) > 0:
 
     with c4:
         v4_min = max(t_min + 3 * dt_val, new_split + dt_val)
-        v4_max = max(v4_min + dt_val, t_max)
+        v4_max = max(v4_min + dt_val, t_landing - dt_val)
         val_4 = max(v4_min, min(st.session_state.t_takeoff, v4_max))
         new_takeoff = st.slider("4. Take-off (s)", min_value=v4_min, max_value=v4_max, value=val_4, step=dt_val, format="%.3f", key="slide_4")
 
-    if (new_start, new_braking, new_split, new_takeoff) != (t_start, t_braking, t_split, t_takeoff):
+    with c5:
+        v5_min = max(t_min + 4 * dt_val, new_takeoff + dt_val)
+        v5_max = max(v5_min + dt_val, t_max)
+        val_5 = max(v5_min, min(st.session_state.t_landing, v5_max))
+        new_landing = st.slider("5. Landing (s)", min_value=v5_min, max_value=v5_max, value=val_5, step=dt_val, format="%.3f", key="slide_5")
+
+    if (new_start, new_braking, new_split, new_takeoff, new_landing) != (t_start, t_braking, t_split, t_takeoff, t_landing):
         st.session_state.t_start = new_start
         st.session_state.t_braking = new_braking
         st.session_state.t_split = new_split
         st.session_state.t_takeoff = new_takeoff
+        st.session_state.t_landing = new_landing
         st.rerun()
 
     col_btn1, col_btn2 = st.columns([1, 4])
@@ -313,11 +326,12 @@ if t is not None and f_total is not None and len(f_total) > 0:
     bIdx = min(max(0, int(round((t_braking - t[0]) / dt_val))), n_samples - 1)
     zIdx = min(max(0, int(round((t_split - t[0]) / dt_val))), n_samples - 1)
     tIdx = min(max(0, int(round((t_takeoff - t[0]) / dt_val))), n_samples - 1)
-    lIdx = min(max(0, int(round((t_curr_landing - t[0]) / dt_val))), n_samples - 1)
+    lIdx = min(max(0, int(round((t_landing - t[0]) / dt_val))), n_samples - 1)
 
     report = calculate_metrics(
         t, f_total, f_left, f_right, dt_val, sIdx, bIdx, zIdx, tIdx, lIdx, 
-        filter_type=filter_type, cutoff=cutoff_freq
+        filter_type=filter_type, cutoff=cutoff_freq, offsets=offsets,
+        lIdx_l=lIdx_l, lIdx_r=lIdx_r
     )
 
     pdf_bytes = generate_pdf_report(
@@ -345,6 +359,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     fig_deficit.add_vline(x=t_braking, line_width=1.5, line_dash="dash", line_color="#ef4444")
     fig_deficit.add_vline(x=t_split, line_width=1.5, line_dash="dash", line_color="#22c55e")
     fig_deficit.add_vline(x=t_takeoff, line_width=1.5, line_dash="dash", line_color="#dc2626")
+    fig_deficit.add_vline(x=t_landing, line_width=1.5, line_dash="dash", line_color="#0284c7")
 
     fig_deficit.add_hline(y=0, line_width=1.2, line_color="#6b7280")
     fig_deficit.add_trace(go.Scatter(x=t, y=deficits, name="Asymmetry", fill='tozeroy', fillcolor='rgba(77, 41, 148, 0.15)', line=dict(color='#4d2994', width=1.5)))
