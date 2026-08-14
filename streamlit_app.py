@@ -42,9 +42,9 @@ if filter_type == "Butterworth LPF":
     filter_size = 15
 elif filter_type == "Moving Average":
     filter_size = st.sidebar.selectbox("Window Size (Frames)", [1, 7, 15, 31], index=2)
-    cutoff_freq = 10.0
+    cutoff_freq = 50.0
 else:
-    cutoff_freq = 10.0
+    cutoff_freq = 50.0
     filter_size = 1
 
 threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
@@ -153,8 +153,8 @@ if t is not None and f_total is not None and len(f_total) > 0:
     )
 
     offset_l, offset_r = offsets
-    f_left_zeroed = np.maximum(0.0, f_left - offset_l)
-    f_right_zeroed = np.maximum(0.0, f_right - offset_r)
+    f_left_zeroed = f_left - offset_l
+    f_right_zeroed = f_right - offset_r
     f_total_zeroed = f_left_zeroed + f_right_zeroed
 
     sf = apply_signal_filter(f_total_zeroed, filter_type=filter_type, cutoff=cutoff_freq, fs=fs, window_size=filter_size)
@@ -188,8 +188,12 @@ if t is not None and f_total is not None and len(f_total) > 0:
     t_takeoff = st.session_state.t_takeoff
     t_landing = st.session_state.t_landing
 
-    crop_x_min = max(t_min, t_start - 1.0)
-    crop_x_max = min(t_max, t_landing + 1.0)
+    # กำหนด Padding หัวท้ายแบบ Dynamic 20% ของระยะเวลาการเคลื่อนไหวรวม
+    total_duration = max(dt_val, t_landing - t_start)
+    pad_time = 0.20 * total_duration
+
+    crop_x_min = max(t_min, t_start - pad_time)
+    crop_x_max = min(t_max, t_landing + pad_time)
 
     if not st.session_state.get("is_confirmed", False):
         display_x_min = t_min
