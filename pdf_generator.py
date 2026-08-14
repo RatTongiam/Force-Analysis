@@ -20,21 +20,22 @@ def load_image_from_github(url):
     except Exception:
         return None
 
-def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing, crop_x_min=None, crop_x_max=None):
+def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing, crop_x_min=None, crop_x_max=None, theme="Modern Coach (Dashboard)"):
     fig, ax = plt.subplots(figsize=(9.0, 3.6), dpi=300)
     
-    # ปรับลดความหนาเส้นกราฟลง 50%
-    ax.plot(t, sl, color='#818cf8', linewidth=0.65, label='Left Limb')
-    ax.plot(t, sr, color='#f87171', linewidth=0.65, label='Right Limb')
-    ax.plot(t, sf, color='#4d2994', linewidth=1.0, label='Total Force')
+    col_l = '#2f6fed' if "Coach" in theme else '#818cf8'
+    col_r = '#ed7d31' if "Coach" in theme else '#f87171'
+    col_tot = '#11395f' if "Coach" in theme else '#4d2994'
+
+    ax.plot(t, sl, color=col_l, linewidth=0.65, label='Left Limb')
+    ax.plot(t, sr, color=col_r, linewidth=0.65, label='Right Limb')
+    ax.plot(t, sf, color=col_tot, linewidth=1.0, label='Total Force')
     
-    # ไฮไลต์ Phase ต่างๆ
     ax.axvspan(t_start, t_braking, color='#eab308', alpha=0.15)
     ax.axvspan(t_braking, t_split, color='#ef4444', alpha=0.15)
     ax.axvspan(t_split, t_takeoff, color='#22c55e', alpha=0.15)
     ax.axvspan(t_takeoff, t_landing, color='#94a3b8', alpha=0.15)
     
-    # เส้นแบ่ง Phase (ลด linewidth ลง 50%)
     ax.axvline(x=t_start, color='#ca8a04', linestyle='--', linewidth=0.65)
     ax.axvline(x=t_braking, color='#ef4444', linestyle='--', linewidth=0.65)
     ax.axvline(x=t_split, color='#22c55e', linestyle='--', linewidth=0.65)
@@ -56,7 +57,7 @@ def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeo
     ax.set_xlim(x_start, x_end)
     ax.set_ylim(0, max_y)
     ax.set_ylabel('Force (N)', fontsize=10.5)
-    ax.set_title('FORCE-TIME ANALYSIS & SUB-PHASES', fontsize=12, fontweight='bold', color='#1e1b4b', pad=8)
+    ax.set_title('FORCE-TIME ANALYSIS & SUB-PHASES', fontsize=12, fontweight='bold', color=col_tot, pad=8)
     ax.grid(True, linestyle=':', alpha=0.6, linewidth=0.5)
     ax.legend(loc='upper right', fontsize=9.0)
 
@@ -90,9 +91,10 @@ def create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeo
     img_buf.seek(0)
     return img_buf
 
-def create_deficit_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing, threshold_alert=15.0, crop_x_min=None, crop_x_max=None):
+def create_deficit_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing, threshold_alert=15.0, crop_x_min=None, crop_x_max=None, theme="Modern Coach (Dashboard)"):
     fig, ax = plt.subplots(figsize=(9.0, 2.3), dpi=300)
     
+    col_tot = '#11395f' if "Coach" in theme else '#4d2994'
     max_sl_sr = np.maximum(sl, sr)
     deficits = np.where((sf >= 50.0) & (max_sl_sr > 0), ((sl - sr) / np.maximum(max_sl_sr, 1e-6)) * 100, 0.0)
 
@@ -101,7 +103,6 @@ def create_deficit_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_tak
     ax.axvspan(t_split, t_takeoff, color='#22c55e', alpha=0.15)
     ax.axvspan(t_takeoff, t_landing, color='#94a3b8', alpha=0.15)
 
-    # ปรับลดความหนาเส้นแบ่ง Phase และเส้นกราฟลง 50%
     ax.axvline(x=t_start, color='#ca8a04', linestyle='--', linewidth=0.65)
     ax.axvline(x=t_braking, color='#ef4444', linestyle='--', linewidth=0.65)
     ax.axvline(x=t_split, color='#22c55e', linestyle='--', linewidth=0.65)
@@ -109,7 +110,7 @@ def create_deficit_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_tak
     ax.axvline(x=t_landing, color='#0284c7', linestyle='--', linewidth=0.65)
 
     ax.axhline(y=0, color='#6b7280', linewidth=0.55)
-    ax.plot(t, deficits, color='#4d2994', linewidth=0.8, label='Asymmetry %')
+    ax.plot(t, deficits, color=col_tot, linewidth=0.8, label='Asymmetry %')
     ax.axhspan(-threshold_alert, threshold_alert, color='#22c55e', alpha=0.15)
 
     t_min = float(t[0]) if len(t) > 0 else 0.0
@@ -121,7 +122,7 @@ def create_deficit_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_tak
     ax.set_ylim(-55, 55)
     ax.set_xlabel('Time (s)', fontsize=10)
     ax.set_ylabel('Deficit %', fontsize=10)
-    ax.set_title('L/R ASYMMETRY % PROFILE', fontsize=11, fontweight='bold', color='#1e1b4b', pad=6)
+    ax.set_title('L/R ASYMMETRY % PROFILE', fontsize=11, fontweight='bold', color=col_tot, pad=6)
     ax.grid(True, linestyle=':', alpha=0.6, linewidth=0.5)
 
     plt.tight_layout()
@@ -131,7 +132,7 @@ def create_deficit_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_tak
     img_buf.seek(0)
     return img_buf
 
-def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing, threshold_alert=15.0, crop_x_min=None, crop_x_max=None):
+def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing, threshold_alert=15.0, crop_x_min=None, crop_x_max=None, theme="Modern Coach (Dashboard)"):
     pdf_buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         pdf_buffer,
@@ -142,57 +143,24 @@ def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_ta
         bottomMargin=15
     )
     
+    primary_color = '#11395f' if "Coach" in theme else '#4d2994'
+    
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle(
-        'DocTitle',
-        parent=styles['Normal'],
-        fontName='Helvetica-Bold',
-        fontSize=14,
-        leading=16,
-        textColor=colors.HexColor('#1e1b4b')
-    )
-    subtitle_style = ParagraphStyle(
-        'DocSubtitle',
-        parent=styles['Normal'],
-        fontName='Helvetica',
-        fontSize=8,
-        leading=10,
-        textColor=colors.HexColor('#64748b')
-    )
-    header_style = ParagraphStyle(
-        'HeaderStyle',
-        fontName='Helvetica-Bold',
-        fontSize=8,
-        leading=10,
-        textColor=colors.whitesmoke
-    )
-    cell_style = ParagraphStyle(
-        'CellStyle',
-        fontName='Helvetica',
-        fontSize=7.5,
-        leading=9.5,
-        textColor=colors.HexColor('#1e293b')
-    )
-    cat_style = ParagraphStyle(
-        'CatStyle',
-        fontName='Helvetica-Bold',
-        fontSize=8,
-        leading=10,
-        textColor=colors.HexColor('#4d2994')
-    )
+    title_style = ParagraphStyle('DocTitle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=14, leading=16, textColor=colors.HexColor(primary_color))
+    subtitle_style = ParagraphStyle('DocSubtitle', parent=styles['Normal'], fontName='Helvetica', fontSize=8, leading=10, textColor=colors.HexColor('#64748b'))
+    header_style = ParagraphStyle('HeaderStyle', fontName='Helvetica-Bold', fontSize=8, leading=10, textColor=colors.whitesmoke)
+    cell_style = ParagraphStyle('CellStyle', fontName='Helvetica', fontSize=7.5, leading=9.5, textColor=colors.HexColor('#1e293b'))
+    cat_style = ParagraphStyle('CatStyle', fontName='Helvetica-Bold', fontSize=8, leading=10, textColor=colors.HexColor(primary_color))
     
     story = []
-    
     story.append(Paragraph("Free JumpAnz Team - Biomechanics Analysis", title_style))
     story.append(Paragraph("PRIMA MOTION TECHNOLOGY — Technology that unlocks scientific insight", subtitle_style))
     story.append(Spacer(1, 4))
     
-    # 1. กราฟ Force-Time
-    force_chart_buf = create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing, crop_x_min, crop_x_max)
+    force_chart_buf = create_force_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing, crop_x_min, crop_x_max, theme=theme)
     story.append(RLImage(force_chart_buf, width=545, height=165))
     story.append(Spacer(1, 4))
     
-    # 2. ตารางค่าชีวกลศาสตร์
     table_data = [[
         Paragraph("Biomechanical Metric", header_style),
         Paragraph("Left", header_style),
@@ -202,10 +170,7 @@ def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_ta
     ]]
     
     for phase_name, metrics in report.items():
-        table_data.append([
-            Paragraph(f"<b>=== {phase_name.upper()} ===</b>", cat_style),
-            "", "", "", ""
-        ])
+        table_data.append([Paragraph(f"<b>=== {phase_name.upper()} ===</b>", cat_style), "", "", "", ""])
         for metric_name, vals in metrics.items():
             table_data.append([
                 Paragraph(metric_name, cell_style),
@@ -216,7 +181,7 @@ def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_ta
             ])
     
     t_style = TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4d2994')),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor(primary_color)),
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 1.6),
@@ -229,8 +194,7 @@ def generate_pdf_report(report, t, sf, sl, sr, t_start, t_braking, t_split, t_ta
     story.append(table)
     story.append(Spacer(1, 4))
 
-    # 3. กราฟ L/R Asymmetry Deficit %
-    deficit_chart_buf = create_deficit_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing, threshold_alert, crop_x_min, crop_x_max)
+    deficit_chart_buf = create_deficit_chart_image(t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing, threshold_alert, crop_x_min, crop_x_max, theme=theme)
     story.append(RLImage(deficit_chart_buf, width=545, height=105))
 
     doc.build(story)
