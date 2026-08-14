@@ -209,7 +209,7 @@ if "Coach" in app_theme:
     st.markdown("""
         <div class="coach-header">
             <h2 style="margin:0; font-size:24px; color:#fff;">CMJ Coach Analyzer v4 — Research & Clinical</h2>
-            <p style="margin:4px 0 0; font-size:12px; color:#dce8f5;">PRIMA MOTION TECHNOLOGY • Comprehensive Biomechanics & Dual-Plate Asymmetry Engine</p>
+            <p style="margin:4px 0 0; font-size:12px; color:#dce8f5;">PRIMA MOTION TECHNOLOGY with Dr.Chawin • Comprehensive Biomechanics & Dual-Plate Asymmetry Engine</p>
         </div>
     """, unsafe_allow_html=True)
 else:
