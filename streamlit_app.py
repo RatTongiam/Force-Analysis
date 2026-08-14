@@ -113,7 +113,6 @@ else:
 
 threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
 
-# Dashboard Header
 if "Coach" in app_theme:
     st.markdown("""
         <div class="coach-header">
@@ -228,6 +227,20 @@ def asym_badge(val_l, val_r):
     except Exception:
         return "-", "-"
 
+def calc_rfd_start(arr, s_idx, dt, ms):
+    n_pts = int((ms / 1000.0) / dt)
+    if s_idx + n_pts < len(arr):
+        return (arr[s_idx + n_pts] - arr[s_idx]) / (ms / 1000.0)
+    return 0.0
+
+def calc_max_win_rfd(arr, s_idx, e_idx, dt, win_ms=20):
+    w = max(1, int((win_ms / 1000.0) / dt))
+    if e_idx - s_idx <= w:
+        return 0.0
+    seg = arr[s_idx:e_idx+1]
+    slopes = (seg[w:] - seg[:-w]) / (w * dt)
+    return float(np.max(slopes)) if len(slopes) > 0 else 0.0
+
 if t is not None and f_total is not None and len(f_total) > 0:
     dt_val = float(dt) if dt is not None and dt > 0 else 0.001
     fs = 1.0 / dt_val
@@ -341,6 +354,32 @@ if t is not None and f_total is not None and len(f_total) > 0:
     pk_pr_l = np.max(sl[zIdx:tIdx+1]) if tIdx > zIdx else 0.0
     pk_pr_r = np.max(sr[zIdx:tIdx+1]) if tIdx > zIdx else 0.0
 
+    # Calculate Full Set of RFD Parameters
+    avg_rfd_br_l = (pk_br_l - sl[bIdx]) / ((zIdx - bIdx) * dt_val) if zIdx > bIdx else 0.0
+    avg_rfd_br_r = (pk_br_r - sr[bIdx]) / ((zIdx - bIdx) * dt_val) if zIdx > bIdx else 0.0
+    avg_rfd_pr_l = (pk_pr_l - sl[zIdx]) / ((tIdx - zIdx) * dt_val) if tIdx > zIdx else 0.0
+    avg_rfd_pr_r = (pk_pr_r - sr[zIdx]) / ((tIdx - zIdx) * dt_val) if tIdx > zIdx else 0.0
+
+    win_rfd_br_l = calc_max_win_rfd(sl, bIdx, zIdx, dt_val, 20)
+    win_rfd_br_r = calc_max_win_rfd(sr, bIdx, zIdx, dt_val, 20)
+    win_rfd_pr_l = calc_max_win_rfd(sl, zIdx, tIdx, dt_val, 20)
+    win_rfd_pr_r = calc_max_win_rfd(sr, zIdx, tIdx, dt_val, 20)
+
+    rfd50_br_l = calc_rfd_start(sl, bIdx, dt_val, 50)
+    rfd50_br_r = calc_rfd_start(sr, bIdx, dt_val, 50)
+    rfd100_br_l = calc_rfd_start(sl, bIdx, dt_val, 100)
+    rfd100_br_r = calc_rfd_start(sr, bIdx, dt_val, 100)
+    rfd200_br_l = calc_rfd_start(sl, bIdx, dt_val, 200)
+    rfd200_br_r = calc_rfd_start(sr, bIdx, dt_val, 200)
+
+    rfd50_pr_l = calc_rfd_start(sl, zIdx, dt_val, 50)
+    rfd50_pr_r = calc_rfd_start(sr, zIdx, dt_val, 50)
+    rfd100_pr_l = calc_rfd_start(sl, zIdx, dt_val, 100)
+    rfd100_pr_r = calc_rfd_start(sr, zIdx, dt_val, 100)
+    rfd200_pr_l = calc_rfd_start(sl, zIdx, dt_val, 200)
+    rfd200_pr_r = calc_rfd_start(sr, zIdx, dt_val, 200)
+
+    # Landing Load Variables
     land_search_end = min(n_samples, lIdx + int(0.5 / dt_val))
     pk_land_tot = np.max(sf[lIdx:land_search_end]) if land_search_end > lIdx else 0.0
     pk_land_l = np.max(sl[lIdx:land_search_end]) if land_search_end > lIdx else 0.0
@@ -362,6 +401,9 @@ if t is not None and f_total is not None and len(f_total) > 0:
 
     mean_br_f = np.mean(sf[bIdx:zIdx+1]) if zIdx > bIdx else 0.0
     mean_pr_f = np.mean(sf[zIdx:tIdx+1]) if tIdx > zIdx else 0.0
+    mean_br_p = np.mean(power_wkg[bIdx:zIdx+1]) if zIdx > bIdx else 0.0
+    mean_pr_p = np.mean(power_wkg[zIdx:tIdx+1]) if tIdx > zIdx else 0.0
+    pos_net_imp = float(np.trapezoid(np.maximum(0, sf[sIdx:tIdx+1] - bw), dx=dt_val))
     leg_stiff = (pk_br_l + pk_br_r) / (com_depth / 100.0) if com_depth > 0 else 0.0
 
     p_asym_txt, _ = asym_badge(pr_net_l, pr_net_r)
@@ -375,6 +417,28 @@ if t is not None and f_total is not None and len(f_total) > 0:
         headline = f"พบ directional asymmetry ใน propulsion net impulse ไปทาง {'Left' if p_diff > 0 else 'Right'}"
     else:
         headline = "การแบ่งแรงซ้าย–ขวาช่วง propulsion อยู่ในช่วงค่อนข้างสมดุลของ trial นี้"
+
+    # Sensitivity Analysis Recomputation (Raw, 20 Hz, 30 Hz, 50 Hz)
+    sens_res = {}
+    for fc_test, name in [(None, "raw"), (20.0, "20"), (30.0, "30"), (50.0, "50")]:
+        filt_sf = f_total_zeroed if fc_test is None else apply_signal_filter(f_total_zeroed, "Butterworth LPF", cutoff=fc_test, fs=fs)
+        net_a = (filt_sf - bw) / mass
+        v_test = np.zeros(n_samples)
+        for k in range(sIdx + 1, min(tIdx + 1, n_samples)):
+            v_test[k] = v_test[k-1] + 0.5 * (net_a[k-1] + net_a[k]) * dt_val
+        
+        jh_t = ((v_test[tIdx] ** 2) / (2.0 * g)) * 100.0
+        imp_t = float(np.trapezoid(filt_sf[zIdx:tIdx+1] - bw, dx=dt_val)) if tIdx > zIdx else 0.0
+        pk_t = float(np.max(filt_sf[zIdx:tIdx+1])) if tIdx > zIdx else 0.0
+        land_t = float(np.max(filt_sf[lIdx:land_search_end])) if land_search_end > lIdx else 0.0
+        rfd_t = calc_max_win_rfd(filt_sf, zIdx, tIdx, dt_val, 20)
+
+        sens_res[name] = {"jh": jh_t, "imp": imp_t, "pk": pk_t, "land": land_t, "rfd": rfd_t}
+
+    def calc_spread(vals):
+        mx, mn = max(vals), min(vals)
+        mid = (abs(mx) + abs(mn)) / 2.0
+        return (abs(mx - mn) / mid * 100.0) if mid > 0 else 0.0
 
     # Modern Dashboard Layout
     if "Coach" in app_theme:
@@ -530,9 +594,19 @@ if t is not None and f_total is not None and len(f_total) > 0:
             {"Phase": "Braking", "Metric": "Peak force", "Left": f"{pk_br_l:.0f} N", "Right": f"{pk_br_r:.0f} N", "Directional asymmetry": asym_badge(pk_br_l, pk_br_r)[0]},
             {"Phase": "Braking", "Metric": "NET impulse", "Left": f"{br_net_l:.1f} N·s", "Right": f"{br_net_r:.1f} N·s", "Directional asymmetry": asym_badge(br_net_l, br_net_r)[0]},
             {"Phase": "Braking", "Metric": "Gross GRF impulse", "Left": f"{br_gross_l:.1f} N·s", "Right": f"{br_gross_r:.1f} N·s", "Directional asymmetry": asym_badge(br_gross_l, br_gross_r)[0]},
+            {"Phase": "Braking", "Metric": "Average RFD to peak", "Left": f"{avg_rfd_br_l:.0f} N/s", "Right": f"{avg_rfd_br_r:.0f} N/s", "Directional asymmetry": asym_badge(avg_rfd_br_l, avg_rfd_br_r)[0]},
+            {"Phase": "Braking", "Metric": "Max 20 ms RFD", "Left": f"{win_rfd_br_l:.0f} N/s", "Right": f"{win_rfd_br_r:.0f} N/s", "Directional asymmetry": asym_badge(win_rfd_br_l, win_rfd_br_r)[0]},
+            {"Phase": "Braking", "Metric": "RFD 0–50 ms", "Left": f"{rfd50_br_l:.0f} N/s", "Right": f"{rfd50_br_r:.0f} N/s", "Directional asymmetry": asym_badge(rfd50_br_l, rfd50_br_r)[0]},
+            {"Phase": "Braking", "Metric": "RFD 0–100 ms", "Left": f"{rfd100_br_l:.0f} N/s", "Right": f"{rfd100_br_r:.0f} N/s", "Directional asymmetry": asym_badge(rfd100_br_l, rfd100_br_r)[0]},
+            {"Phase": "Braking", "Metric": "RFD 0–200 ms", "Left": f"{rfd200_br_l:.0f} N/s", "Right": f"{rfd200_br_r:.0f} N/s", "Directional asymmetry": asym_badge(rfd200_br_l, rfd200_br_r)[0]},
             {"Phase": "Propulsion", "Metric": "Peak force", "Left": f"{pk_pr_l:.0f} N", "Right": f"{pk_pr_r:.0f} N", "Directional asymmetry": asym_badge(pk_pr_l, pk_pr_r)[0]},
             {"Phase": "Propulsion", "Metric": "NET impulse", "Left": f"{pr_net_l:.1f} N·s", "Right": f"{pr_net_r:.1f} N·s", "Directional asymmetry": asym_badge(pr_net_l, pr_net_r)[0]},
-            {"Phase": "Propulsion", "Metric": "Gross GRF impulse", "Left": f"{pr_gross_l:.1f} N·s", "Right": f"{pr_gross_r:.1f} N·s", "Directional asymmetry": asym_badge(pr_gross_l, pr_gross_r)[0]}
+            {"Phase": "Propulsion", "Metric": "Gross GRF impulse", "Left": f"{pr_gross_l:.1f} N·s", "Right": f"{pr_gross_r:.1f} N·s", "Directional asymmetry": asym_badge(pr_gross_l, pr_gross_r)[0]},
+            {"Phase": "Propulsion", "Metric": "Average RFD to peak", "Left": f"{avg_rfd_pr_l:.0f} N/s", "Right": f"{avg_rfd_pr_r:.0f} N/s", "Directional asymmetry": asym_badge(avg_rfd_pr_l, avg_rfd_pr_r)[0]},
+            {"Phase": "Propulsion", "Metric": "Max 20 ms RFD", "Left": f"{win_rfd_pr_l:.0f} N/s", "Right": f"{win_rfd_pr_r:.0f} N/s", "Directional asymmetry": asym_badge(win_rfd_pr_l, win_rfd_pr_r)[0]},
+            {"Phase": "Propulsion", "Metric": "RFD 0–50 ms", "Left": f"{rfd50_pr_l:.0f} N/s", "Right": f"{rfd50_pr_r:.0f} N/s", "Directional asymmetry": asym_badge(rfd50_pr_l, rfd50_pr_r)[0]},
+            {"Phase": "Propulsion", "Metric": "RFD 0–100 ms", "Left": f"{rfd100_pr_l:.0f} N/s", "Right": f"{rfd100_pr_r:.0f} N/s", "Directional asymmetry": asym_badge(rfd100_pr_l, rfd100_pr_r)[0]},
+            {"Phase": "Propulsion", "Metric": "RFD 0–200 ms", "Left": f"{rfd200_pr_l:.0f} N/s", "Right": f"{rfd200_pr_r:.0f} N/s", "Directional asymmetry": asym_badge(rfd200_pr_l, rfd200_pr_r)[0]}
         ]
         st.dataframe(pd.DataFrame(bp_rows), hide_index=True, width="stretch")
 
@@ -571,10 +645,11 @@ if t is not None and f_total is not None and len(f_total) > 0:
         rr1, rr2 = st.columns(2)
         with rr1:
             st.markdown("### Research-grade derived metrics")
-            pos_net_imp = float(np.trapezoid(np.maximum(0, sf[sIdx:tIdx+1] - bw), dx=dt_val))
             res_df = pd.DataFrame([
                 {"Metric": "Mean braking force", "Value": f"{mean_br_f/mass:.2f} N/kg ({mean_br_f:.0f} N)"},
                 {"Metric": "Mean propulsive force", "Value": f"{mean_pr_f/mass:.2f} N/kg ({mean_pr_f:.0f} N)"},
+                {"Metric": "Mean braking power", "Value": f"{abs(mean_br_p):.2f} W/kg"},
+                {"Metric": "Mean propulsive power", "Value": f"{mean_pr_p:.2f} W/kg"},
                 {"Metric": "Positive net impulse", "Value": f"{pos_net_imp/mass:.3f} N·s/kg ({pos_net_imp:.1f} N·s)"},
                 {"Metric": "Leg stiffness (Exploratory)", "Value": f"{leg_stiff/mass:.1f} N/m/kg"}
             ])
@@ -589,6 +664,16 @@ if t is not None and f_total is not None and len(f_total) > 0:
             ])
             st.dataframe(clin_df, hide_index=True, width="stretch")
 
+        st.markdown("### Filter sensitivity analysis")
+        sens_df = pd.DataFrame([
+            {"Metric": "Jump height (cm)", "Raw": f"{sens_res['raw']['jh']:.1f}", "20 Hz": f"{sens_res['20']['jh']:.1f}", "30 Hz": f"{sens_res['30']['jh']:.1f}", "50 Hz": f"{sens_res['50']['jh']:.1f}", "Max spread": f"{calc_spread([sens_res['raw']['jh'], sens_res['20']['jh'], sens_res['30']['jh'], sens_res['50']['jh']]):.1f}%"},
+            {"Metric": "Propulsive net impulse (N·s)", "Raw": f"{sens_res['raw']['imp']:.1f}", "20 Hz": f"{sens_res['20']['imp']:.1f}", "30 Hz": f"{sens_res['30']['imp']:.1f}", "50 Hz": f"{sens_res['50']['imp']:.1f}", "Max spread": f"{calc_spread([sens_res['raw']['imp'], sens_res['20']['imp'], sens_res['30']['imp'], sens_res['50']['imp']]):.1f}%"},
+            {"Metric": "Peak propulsive force (N)", "Raw": f"{sens_res['raw']['pk']:.0f}", "20 Hz": f"{sens_res['20']['pk']:.0f}", "30 Hz": f"{sens_res['30']['pk']:.0f}", "50 Hz": f"{sens_res['50']['pk']:.0f}", "Max spread": f"{calc_spread([sens_res['raw']['pk'], sens_res['20']['pk'], sens_res['30']['pk'], sens_res['50']['pk']]):.1f}%"},
+            {"Metric": "Peak landing force (N)", "Raw": f"{sens_res['raw']['land']:.0f}", "20 Hz": f"{sens_res['20']['land']:.0f}", "30 Hz": f"{sens_res['30']['land']:.0f}", "50 Hz": f"{sens_res['50']['land']:.0f}", "Max spread": f"{calc_spread([sens_res['raw']['land'], sens_res['20']['land'], sens_res['30']['land'], sens_res['50']['land']]):.1f}%"},
+            {"Metric": "Max-window propulsive RFD (N/s)", "Raw": f"{sens_res['raw']['rfd']:.0f}", "20 Hz": f"{sens_res['20']['rfd']:.0f}", "30 Hz": f"{sens_res['30']['rfd']:.0f}", "50 Hz": f"{sens_res['50']['rfd']:.0f}", "Max spread": f"{calc_spread([sens_res['raw']['rfd'], sens_res['20']['rfd'], sens_res['30']['rfd'], sens_res['50']['rfd']]):.1f}%"}
+        ])
+        st.dataframe(sens_df, hide_index=True, width="stretch")
+
         st.markdown("### Interpretation for coach")
         interp_txt = f"""
         * **Performance:** jump height จาก impulse = **{jh_imp_val:.1f} cm**, flight-time = **{jh_flt_val:.1f} cm**, time-to-take-off = **{ttt_val*1000:.0f} ms**, RSImod = **{rsi_val:.2f} m/s**.
@@ -598,88 +683,73 @@ if t is not None and f_total is not None and len(f_total) > 0:
         """
         st.markdown(interp_txt)
 
-    # -------------------------------------------------------------
-    # 6. Asymmetry % Profile Graph
-    # -------------------------------------------------------------
-    st.markdown("---")
-    max_sl_sr = np.maximum(sl, sr)
-    deficits = np.where((sf >= 50) & (max_sl_sr > 0), ((sl - sr) / np.maximum(max_sl_sr, 1e-6)) * 100, 0)
-    fig_deficit = go.Figure()
-
-    fig_deficit.add_vrect(x0=t_start, x1=t_braking, fillcolor="rgba(234, 179, 8, 0.12)", line_width=0)
-    fig_deficit.add_vrect(x0=t_braking, x1=t_split, fillcolor="rgba(239, 68, 68, 0.12)", line_width=0)
-    fig_deficit.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="rgba(34, 197, 94, 0.12)", line_width=0)
-    fig_deficit.add_vrect(x0=t_takeoff, x1=t_landing, fillcolor="rgba(148, 163, 184, 0.12)", line_width=0)
-
-    fig_deficit.add_vline(x=t_start, line_width=1.5, line_dash="dash", line_color="#ca8a04")
-    fig_deficit.add_vline(x=t_braking, line_width=1.5, line_dash="dash", line_color="#ef4444")
-    fig_deficit.add_vline(x=t_split, line_width=1.5, line_dash="dash", line_color="#22c55e")
-    fig_deficit.add_vline(x=t_takeoff, line_width=1.5, line_dash="dash", line_color="#dc2626")
-    fig_deficit.add_vline(x=t_landing, line_width=1.5, line_dash="dash", line_color="#0284c7")
-
-    fig_deficit.add_hline(y=0, line_width=1.2, line_color="#6b7280")
-    fig_deficit.add_trace(go.Scatter(x=t, y=deficits, name="Asymmetry", fill='tozeroy', fillcolor='rgba(17, 57, 95, 0.15)' if "Coach" in app_theme else 'rgba(77, 41, 148, 0.15)', line=dict(color=col_tot_hex, width=1.5)))
-    fig_deficit.add_hrect(y0=-threshold_alert, y1=threshold_alert, fillcolor="rgba(34, 197, 94, 0.15)", line_width=0)
-
-    fig_deficit.add_annotation(
-        xref="paper", yref="y", x=0.01, y=38, text="<b>← Left Dominant (L > R)</b>", showarrow=False,
-        font=dict(size=11, color=col_l_hex), bgcolor="rgba(255, 255, 255, 0.8)", bordercolor=col_l_hex, borderwidth=1
-    )
-    fig_deficit.add_annotation(
-        xref="paper", yref="y", x=0.01, y=-38, text="<b>← Right Dominant (R > L)</b>", showarrow=False,
-        font=dict(size=11, color=col_r_hex), bgcolor="rgba(255, 255, 255, 0.8)", bordercolor=col_r_hex, borderwidth=1
-    )
-
-    fig_deficit.update_layout(
-        title="L/R ASYMMETRY % PROFILE (Threshold Alert & Limb Dominance)", 
-        xaxis_title="Time (s)", yaxis_title="Deficit %", 
-        yaxis_range=[-55, 55], height=340, margin=dict(l=40, r=40, t=50, b=20)
-    )
-    fig_deficit.update_xaxes(range=[display_x_min, display_x_max])
-    st.plotly_chart(fig_deficit, width="stretch")
-
-    # -------------------------------------------------------------
-    # 7. Standard Report Table & PDF Export
-    # -------------------------------------------------------------
-    st.markdown(f"### 📋 Full Biomechanical Report ({'Movement Sub-phases' if group_mode_param=='phase' else 'Anicic et al., 2023'})")
-    table_rows = []
-    for phase_name, metrics in report.items():
-        table_rows.append({"Biomechanical Metric": f"=== {phase_name.upper()} ===", "Left": "", "Right": "", "TOTAL": "", "Deficit %": ""})
-        for metric_name, vals in metrics.items():
-            table_rows.append({
-                "Biomechanical Metric": metric_name,
-                "Left": vals["Left"],
-                "Right": vals["Right"],
-                "TOTAL": vals["Total"],
-                "Deficit %": vals["Deficit"]
-            })
-    
-    st.dataframe(pd.DataFrame(table_rows), width="stretch", hide_index=True)
-
-    # Package Coach Context for PDF
+    # Package Coach PDF Context with Complete Dataset
     coach_pdf_context = {
         "jh_imp": f"{jh_imp_val:.1f}", "jh_flt": f"{jh_flt_val:.1f}", "rsi": f"{rsi_val:.2f}", "ppk": f"{ppk_wkg:.1f}",
         "headline": "Bilateral propulsion net impulse is balanced in this trial." if abs(p_diff) < 10 else f"Directional asymmetry in propulsion net impulse ({abs(p_diff):.1f}%).",
         "sub": f"JH {jh_imp_val:.1f} cm • RSImod {rsi_val:.2f} m/s • Propulsion Asym {abs(p_diff):.1f}% • Landing Asym {abs(l_diff):.1f}%.",
         "act1": "Propulsion net impulse is balanced; use as baseline for fatigue monitoring.",
         "act2": "Use average of 3-5 valid trials and CV% before concluding pattern.",
+        
+        # Braking Left / Right & RFD
         "pk_br_l": f"{pk_br_l:.0f}", "pk_br_r": f"{pk_br_r:.0f}", "asym_pk_br": asym_badge(pk_br_l, pk_br_r)[0],
         "br_net_l": f"{br_net_l:.1f}", "br_net_r": f"{br_net_r:.1f}", "asym_br_net": asym_badge(br_net_l, br_net_r)[0],
         "br_gross_l": f"{br_gross_l:.1f}", "br_gross_r": f"{br_gross_r:.1f}", "asym_br_gross": asym_badge(br_gross_l, br_gross_r)[0],
+        "avg_rfd_br_l": f"{avg_rfd_br_l:.0f}", "avg_rfd_br_r": f"{avg_rfd_br_r:.0f}", "asym_avg_rfd_br": asym_badge(avg_rfd_br_l, avg_rfd_br_r)[0],
+        "win_rfd_br_l": f"{win_rfd_br_l:.0f}", "win_rfd_br_r": f"{win_rfd_br_r:.0f}", "asym_win_rfd_br": asym_badge(win_rfd_br_l, win_rfd_br_r)[0],
+        "rfd50_br_l": f"{rfd50_br_l:.0f}", "rfd50_br_r": f"{rfd50_br_r:.0f}", "asym_rfd50_br": asym_badge(rfd50_br_l, rfd50_br_r)[0],
+        "rfd100_br_l": f"{rfd100_br_l:.0f}", "rfd100_br_r": f"{rfd100_br_r:.0f}", "asym_rfd100_br": asym_badge(rfd100_br_l, rfd100_br_r)[0],
+        "rfd200_br_l": f"{rfd200_br_l:.0f}", "rfd200_br_r": f"{rfd200_br_r:.0f}", "asym_rfd200_br": asym_badge(rfd200_br_l, rfd200_br_r)[0],
+
+        # Propulsion Left / Right & RFD
         "pk_pr_l": f"{pk_pr_l:.0f}", "pk_pr_r": f"{pk_pr_r:.0f}", "asym_pk_pr": asym_badge(pk_pr_l, pk_pr_r)[0],
         "pr_net_l": f"{pr_net_l:.1f}", "pr_net_r": f"{pr_net_r:.1f}", "asym_pr_net": asym_badge(pr_net_l, pr_net_r)[0],
         "pr_gross_l": f"{pr_gross_l:.1f}", "pr_gross_r": f"{pr_gross_r:.1f}", "asym_pr_gross": asym_badge(pr_gross_l, pr_gross_r)[0],
-        "fs": f"{fs:.0f}", "cv": f"{cv_val:.2f}", "fres": f"{abs(offset_l)+abs(offset_r):.1f}", "jh_diff": f"{jh_diff_val:.2f}",
-        "mass": f"{mass:.2f}", "ttt": f"{ttt_val*1000:.0f}", "d_brk": f"{(t_split - t_braking)*1000:.0f}", "depth": f"{com_depth:.1f}",
+        "avg_rfd_pr_l": f"{avg_rfd_pr_l:.0f}", "avg_rfd_pr_r": f"{avg_rfd_pr_r:.0f}", "asym_avg_rfd_pr": asym_badge(avg_rfd_pr_l, avg_rfd_pr_r)[0],
+        "win_rfd_pr_l": f"{win_rfd_pr_l:.0f}", "win_rfd_pr_r": f"{win_rfd_pr_r:.0f}", "asym_win_rfd_pr": asym_badge(win_rfd_pr_l, win_rfd_pr_r)[0],
+        "rfd50_pr_l": f"{rfd50_pr_l:.0f}", "rfd50_pr_r": f"{rfd50_pr_r:.0f}", "asym_rfd50_pr": asym_badge(rfd50_pr_l, rfd50_pr_r)[0],
+        "rfd100_pr_l": f"{rfd100_pr_l:.0f}", "rfd100_pr_r": f"{rfd100_pr_r:.0f}", "asym_rfd100_pr": asym_badge(rfd100_pr_l, rfd100_pr_r)[0],
+        "rfd200_pr_l": f"{rfd200_pr_l:.0f}", "rfd200_pr_r": f"{rfd200_pr_r:.0f}", "asym_rfd200_pr": asym_badge(rfd200_pr_l, rfd200_pr_r)[0],
+
+        # Quality Checks & Timing
+        "fs": f"{fs:.0f}", "zero_off": f"{offset_l:.1f} / {offset_r:.1f} N",
+        "cv": f"{cv_val:.2f}", "bw": f"{bw:.2f}", "bw_sd": f"{bw_sd:.2f}",
+        "fres": f"{abs(offset_l)+abs(offset_r):.1f}", "fres_l": f"{offset_l:.1f}", "fres_r": f"{offset_r:.1f}",
+        "jh_diff": f"{jh_diff_val:.2f}", "jh_diff_pct": f"{jh_diff_pct:.1f}",
+        "closure": f"{abs(float(np.trapezoid(sf[sIdx:tIdx+1]-bw, dx=dt_val)) - mass*v_to):.4f}",
+        "mass": f"{mass:.2f}", "ttt": f"{ttt_val*1000:.0f}",
+        "d_unw": f"{(t_braking - t_start)*1000:.0f}", "d_brk": f"{(t_split - t_braking)*1000:.0f}",
+        "d_pro": f"{(t_takeoff - t_split)*1000:.0f}", "d_fly": f"{flight_dur*1000:.0f}", "depth": f"{com_depth:.1f}",
+
+        # Kinematics Curves
         "vel": vel_total[sIdx:lIdx+1], "power": power_wkg[sIdx:tIdx+1],
+
+        # Landing Left / Right & Total Load
+        "pk_land_l": f"{pk_land_l:.0f}", "pk_land_r": f"{pk_land_r:.0f}", "asym_pk_land": asym_badge(pk_land_l, pk_land_r)[0],
+        "land_imp_l": f"{land_imp_250_l:.1f}", "land_imp_r": f"{land_imp_250_r:.1f}",
         "pk_land_tot": f"{pk_land_tot:.0f}", "pk_land_bw": f"{pk_land_tot/bw:.2f}",
         "load_rate": f"{load_rate:.0f}", "load_rate_bw": f"{load_rate/bw:.1f}",
         "land_imp_250": f"{land_imp_250_tot:.1f}", "ttp_land": f"{ttp_land_ms:.1f}",
-        "mean_br_f": f"{mean_br_f/mass:.2f}", "leg_stiff": f"{leg_stiff/mass:.1f}",
-        "interp_text": f"Performance: JH impulse={jh_imp_val:.1f} cm, RSImod={rsi_val:.2f} | Propulsion Net Asym: {asym_badge(pr_net_l, pr_net_r)[0]} | Landing Peak Asym: {asym_badge(pk_land_l, pk_land_r)[0]}"
+
+        # Research Derived Metrics & Clinical Mapping
+        "mean_br_f": f"{mean_br_f/mass:.2f}", "mean_br_f_tot": f"{mean_br_f:.0f}",
+        "mean_pr_f": f"{mean_pr_f/mass:.2f}", "mean_pr_f_tot": f"{mean_pr_f:.0f}",
+        "mean_br_p": f"{abs(mean_br_p):.2f}", "mean_pr_p": f"{mean_pr_p:.2f}",
+        "pos_net_imp_kg": f"{pos_net_imp/mass:.3f}", "pos_net_imp": f"{pos_net_imp:.1f}",
+        "leg_stiff": f"{leg_stiff/mass:.1f}",
+        "inv_prop_def": "Select involved limb" if involved_limb=="None / Athlete" else f"{((pr_net_l - pr_net_r)/pr_net_r)*100:+.1f}%",
+        "inv_land_def": "Select involved limb" if involved_limb=="None / Athlete" else f"{((pk_land_l - pk_land_r)/pk_land_r)*100:+.1f}%",
+        "base_ch": "No baseline entered" if baseline_jh==0 else f"{((jh_imp_val-baseline_jh)/baseline_jh)*100:+.1f}%",
+        "mdc_res": "—" if baseline_jh==0 else ("YES — exceeds MDC" if abs(((jh_imp_val-baseline_jh)/baseline_jh)*100)>=mdc_pct else "NO — within MDC"),
+
+        # Sensitivity Analysis Matrix
+        "sens_jh_raw": f"{sens_res['raw']['jh']:.1f}", "sens_jh_20": f"{sens_res['20']['jh']:.1f}", "sens_jh_30": f"{sens_res['30']['jh']:.1f}", "sens_jh_50": f"{sens_res['50']['jh']:.1f}", "sens_jh_sp": f"{calc_spread([sens_res['raw']['jh'], sens_res['20']['jh'], sens_res['30']['jh'], sens_res['50']['jh']]):.1f}%",
+        "sens_imp_raw": f"{sens_res['raw']['imp']:.1f}", "sens_imp_20": f"{sens_res['20']['imp']:.1f}", "sens_imp_30": f"{sens_res['30']['imp']:.1f}", "sens_imp_50": f"{sens_res['50']['imp']:.1f}", "sens_imp_sp": f"{calc_spread([sens_res['raw']['imp'], sens_res['20']['imp'], sens_res['30']['imp'], sens_res['50']['imp']]):.1f}%",
+        "sens_pk_raw": f"{sens_res['raw']['pk']:.0f}", "sens_pk_20": f"{sens_res['20']['pk']:.0f}", "sens_pk_30": f"{sens_res['30']['pk']:.0f}", "sens_pk_50": f"{sens_res['50']['pk']:.0f}", "sens_pk_sp": f"{calc_spread([sens_res['raw']['pk'], sens_res['20']['pk'], sens_res['30']['pk'], sens_res['50']['pk']]):.1f}%",
+        "sens_land_raw": f"{sens_res['raw']['land']:.0f}", "sens_land_20": f"{sens_res['20']['land']:.0f}", "sens_land_30": f"{sens_res['30']['land']:.0f}", "sens_land_50": f"{sens_res['50']['land']:.0f}", "sens_land_sp": f"{calc_spread([sens_res['raw']['land'], sens_res['20']['land'], sens_res['30']['land'], sens_res['50']['land']]):.1f}%",
+        "sens_rfd_raw": f"{sens_res['raw']['rfd']:.0f}", "sens_rfd_20": f"{sens_res['20']['rfd']:.0f}", "sens_rfd_30": f"{sens_res['30']['rfd']:.0f}", "sens_rfd_50": f"{sens_res['50']['rfd']:.0f}", "sens_rfd_sp": f"{calc_spread([sens_res['raw']['rfd'], sens_res['20']['rfd'], sens_res['30']['rfd'], sens_res['50']['rfd']]):.1f}%",
     } if "Coach" in app_theme else {}
 
-    # ส่งตัวแปร coach_context เข้าไปสร้าง PDF
     pdf_bytes = generate_pdf_report(
         report, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing,
         threshold_alert=threshold_alert, crop_x_min=crop_x_min, crop_x_max=crop_x_max,
