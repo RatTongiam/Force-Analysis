@@ -38,7 +38,7 @@ filter_type = st.sidebar.selectbox(
 )
 
 if filter_type == "Butterworth LPF":
-    cutoff_freq = st.sidebar.slider("Cutoff Frequency (Hz)", min_value=5.0, max_value=100.0, value=10.0, step=5.0)
+    cutoff_freq = st.sidebar.slider("Cutoff Frequency (Hz)", min_value=5.0, max_value=100.0, value=50.0, step=5.0)
     filter_size = 15
 elif filter_type == "Moving Average":
     filter_size = st.sidebar.selectbox("Window Size (Frames)", [1, 7, 15, 31], index=2)
