@@ -43,6 +43,7 @@ else:
     baseline_jh = 0.0
     mdc_pct = 5.0
 
+# Theme Color Palettes & CSS Injection
 if "Coach" in app_theme:
     col_l_hex = "#2f6fed"
     col_r_hex = "#ed7d31"
@@ -113,6 +114,7 @@ else:
 
 threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
 
+# Dashboard Header
 if "Coach" in app_theme:
     st.markdown("""
         <div class="coach-header">
@@ -313,6 +315,9 @@ if t is not None and f_total is not None and len(f_total) > 0:
         lIdx_l=lIdx_l, lIdx_r=lIdx_r, group_by=group_mode_param
     )
 
+    # -------------------------------------------------------------
+    # 2. General Biomechanical Calculations (Always Executed)
+    # -------------------------------------------------------------
     bw = np.mean(sf[:quiet_samples])
     bw_sd = np.std(sf[:quiet_samples])
     mass = bw / g if bw > 0 else 70.0
@@ -354,7 +359,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
     pk_pr_l = np.max(sl[zIdx:tIdx+1]) if tIdx > zIdx else 0.0
     pk_pr_r = np.max(sr[zIdx:tIdx+1]) if tIdx > zIdx else 0.0
 
-    # Calculate Full Set of RFD Parameters
     avg_rfd_br_l = (pk_br_l - sl[bIdx]) / ((zIdx - bIdx) * dt_val) if zIdx > bIdx else 0.0
     avg_rfd_br_r = (pk_br_r - sr[bIdx]) / ((zIdx - bIdx) * dt_val) if zIdx > bIdx else 0.0
     avg_rfd_pr_l = (pk_pr_l - sl[zIdx]) / ((tIdx - zIdx) * dt_val) if tIdx > zIdx else 0.0
@@ -379,7 +383,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
     rfd200_pr_l = calc_rfd_start(sl, zIdx, dt_val, 200)
     rfd200_pr_r = calc_rfd_start(sr, zIdx, dt_val, 200)
 
-    # Landing Load Variables
     land_search_end = min(n_samples, lIdx + int(0.5 / dt_val))
     pk_land_tot = np.max(sf[lIdx:land_search_end]) if land_search_end > lIdx else 0.0
     pk_land_l = np.max(sl[lIdx:land_search_end]) if land_search_end > lIdx else 0.0
@@ -418,7 +421,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     else:
         headline = "การแบ่งแรงซ้าย–ขวาช่วง propulsion อยู่ในช่วงค่อนข้างสมดุลของ trial นี้"
 
-    # Sensitivity Analysis Recomputation (Raw, 20 Hz, 30 Hz, 50 Hz)
+    # Sensitivity Analysis Recomputation
     sens_res = {}
     for fc_test, name in [(None, "raw"), (20.0, "20"), (30.0, "30"), (50.0, "50")]:
         filt_sf = f_total_zeroed if fc_test is None else apply_signal_filter(f_total_zeroed, "Butterworth LPF", cutoff=fc_test, fs=fs)
@@ -440,7 +443,9 @@ if t is not None and f_total is not None and len(f_total) > 0:
         mid = (abs(mx) + abs(mn)) / 2.0
         return (abs(mx - mn) / mid * 100.0) if mid > 0 else 0.0
 
-    # Modern Dashboard Layout
+    # -------------------------------------------------------------
+    # 3. Modern Coach Top KPI Scorecards
+    # -------------------------------------------------------------
     if "Coach" in app_theme:
         k1, k2, k3, k4 = st.columns(4)
         with k1:
@@ -453,6 +458,9 @@ if t is not None and f_total is not None and len(f_total) > 0:
             st.markdown(f'<div class="kpi-card"><div class="kpi-sub">PEAK CONCENTRIC POWER</div><div class="kpi-metric">{ppk_wkg:.1f} W/kg</div><div class="kpi-sub">{ppk_wkg*mass:.0f} W Total</div></div>', unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
+    # -------------------------------------------------------------
+    # 4. Interactive Force-Time Plot (+ Coach Snapshot if Coach Theme)
+    # -------------------------------------------------------------
     if "Coach" in app_theme:
         col_g, col_s = st.columns([8, 4])
     else:
@@ -499,7 +507,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
             )
 
         fig_force.update_layout(
-            title="Interactive vertical force–time curve",
+            title="FORCE-TIME ANALYSIS & SUB-PHASES" if "Classic" in app_theme else "Interactive vertical force–time curve",
             xaxis_title="Time (s)", yaxis_title="Force (N)",
             height=460, margin=dict(l=40, r=40, t=50, b=20)
         )
@@ -518,7 +526,9 @@ if t is not None and f_total is not None and len(f_total) > 0:
             st.markdown(f'<div class="coach-action">Propulsion net impulse สมดุลใน trial นี้ใช้เป็น baseline เพื่อติดตาม fatigue / RTP ได้</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="coach-action">ใช้ค่าเฉลี่ย 3–5 valid trials และ CV% ก่อนสรุป pattern ระยะยาว</div>', unsafe_allow_html=True)
 
-    # Timeline Sliders
+    # -------------------------------------------------------------
+    # 5. Timeline Sliders (Always Executed)
+    # -------------------------------------------------------------
     st.markdown("##### 🎚️ Phase Boundary Timeline Controls")
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
@@ -556,7 +566,9 @@ if t is not None and f_total is not None and len(f_total) > 0:
                 st.session_state.is_confirmed = False
                 st.rerun()
 
-    # Modern Coach Specific Panels
+    # -------------------------------------------------------------
+    # 6. Modern Coach Dashboard Modules (When Coach Theme is Selected)
+    # -------------------------------------------------------------
     if "Coach" in app_theme:
         st.markdown("---")
         r1_c1, r1_c2 = st.columns(2)
@@ -648,8 +660,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
             res_df = pd.DataFrame([
                 {"Metric": "Mean braking force", "Value": f"{mean_br_f/mass:.2f} N/kg ({mean_br_f:.0f} N)"},
                 {"Metric": "Mean propulsive force", "Value": f"{mean_pr_f/mass:.2f} N/kg ({mean_pr_f:.0f} N)"},
-                {"Metric": "Mean braking power", "Value": f"{abs(mean_br_p):.2f} W/kg"},
-                {"Metric": "Mean propulsive power", "Value": f"{mean_pr_p:.2f} W/kg"},
                 {"Metric": "Positive net impulse", "Value": f"{pos_net_imp/mass:.3f} N·s/kg ({pos_net_imp:.1f} N·s)"},
                 {"Metric": "Leg stiffness (Exploratory)", "Value": f"{leg_stiff/mass:.1f} N/m/kg"}
             ])
@@ -683,7 +693,65 @@ if t is not None and f_total is not None and len(f_total) > 0:
         """
         st.markdown(interp_txt)
 
-    # Package Coach PDF Context with Complete Dataset
+    # -------------------------------------------------------------
+    # 7. Asymmetry % Profile Graph (Always Executed for Both Themes)
+    # -------------------------------------------------------------
+    st.markdown("---")
+    max_sl_sr = np.maximum(sl, sr)
+    deficits = np.where((sf >= 50) & (max_sl_sr > 0), ((sl - sr) / np.maximum(max_sl_sr, 1e-6)) * 100, 0)
+    fig_deficit = go.Figure()
+
+    fig_deficit.add_vrect(x0=t_start, x1=t_braking, fillcolor="rgba(234, 179, 8, 0.12)", line_width=0)
+    fig_deficit.add_vrect(x0=t_braking, x1=t_split, fillcolor="rgba(239, 68, 68, 0.12)", line_width=0)
+    fig_deficit.add_vrect(x0=t_split, x1=t_takeoff, fillcolor="rgba(34, 197, 94, 0.12)", line_width=0)
+    fig_deficit.add_vrect(x0=t_takeoff, x1=t_landing, fillcolor="rgba(148, 163, 184, 0.12)", line_width=0)
+
+    fig_deficit.add_vline(x=t_start, line_width=1.5, line_dash="dash", line_color="#ca8a04")
+    fig_deficit.add_vline(x=t_braking, line_width=1.5, line_dash="dash", line_color="#ef4444")
+    fig_deficit.add_vline(x=t_split, line_width=1.5, line_dash="dash", line_color="#22c55e")
+    fig_deficit.add_vline(x=t_takeoff, line_width=1.5, line_dash="dash", line_color="#dc2626")
+    fig_deficit.add_vline(x=t_landing, line_width=1.5, line_dash="dash", line_color="#0284c7")
+
+    fig_deficit.add_hline(y=0, line_width=1.2, line_color="#6b7280")
+    fig_deficit.add_trace(go.Scatter(x=t, y=deficits, name="Asymmetry", fill='tozeroy', fillcolor='rgba(17, 57, 95, 0.15)' if "Coach" in app_theme else 'rgba(77, 41, 148, 0.15)', line=dict(color=col_tot_hex, width=1.5)))
+    fig_deficit.add_hrect(y0=-threshold_alert, y1=threshold_alert, fillcolor="rgba(34, 197, 94, 0.15)", line_width=0)
+
+    fig_deficit.add_annotation(
+        xref="paper", yref="y", x=0.01, y=38, text="<b>← Left Dominant (L > R)</b>", showarrow=False,
+        font=dict(size=11, color=col_l_hex), bgcolor="rgba(255, 255, 255, 0.8)", bordercolor=col_l_hex, borderwidth=1
+    )
+    fig_deficit.add_annotation(
+        xref="paper", yref="y", x=0.01, y=-38, text="<b>← Right Dominant (R > L)</b>", showarrow=False,
+        font=dict(size=11, color=col_r_hex), bgcolor="rgba(255, 255, 255, 0.8)", bordercolor=col_r_hex, borderwidth=1
+    )
+
+    fig_deficit.update_layout(
+        title="L/R ASYMMETRY % (Threshold Alert & Limb Dominance)" if "Classic" in app_theme else "L/R ASYMMETRY % PROFILE (Threshold Alert & Limb Dominance)", 
+        xaxis_title="Time (s)", yaxis_title="Deficit %", 
+        yaxis_range=[-55, 55], height=340, margin=dict(l=40, r=40, t=50, b=20)
+    )
+    fig_deficit.update_xaxes(range=[display_x_min, display_x_max])
+    st.plotly_chart(fig_deficit, width="stretch")
+
+    # -------------------------------------------------------------
+    # 8. Full Report Table & PDF Download (Always Executed)
+    # -------------------------------------------------------------
+    st.markdown(f"### 📋 Full Biomechanical Report ({'Movement Sub-phases' if group_mode_param=='phase' else 'Anicic et al., 2023'})")
+    table_rows = []
+    for phase_name, metrics in report.items():
+        table_rows.append({"Biomechanical Metric": f"=== {phase_name.upper()} ===", "Left": "", "Right": "", "TOTAL": "", "Deficit %": ""})
+        for metric_name, vals in metrics.items():
+            table_rows.append({
+                "Biomechanical Metric": metric_name,
+                "Left": vals["Left"],
+                "Right": vals["Right"],
+                "TOTAL": vals["Total"],
+                "Deficit %": vals["Deficit"]
+            })
+    
+    st.dataframe(pd.DataFrame(table_rows), width="stretch", hide_index=True)
+
+    # Package Coach PDF Context
     coach_pdf_context = {
         "jh_imp": f"{jh_imp_val:.1f}", "jh_flt": f"{jh_flt_val:.1f}", "rsi": f"{rsi_val:.2f}", "ppk": f"{ppk_wkg:.1f}",
         "headline": "Bilateral propulsion net impulse is balanced in this trial." if abs(p_diff) < 10 else f"Directional asymmetry in propulsion net impulse ({abs(p_diff):.1f}%).",
@@ -691,7 +759,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
         "act1": "Propulsion net impulse is balanced; use as baseline for fatigue monitoring.",
         "act2": "Use average of 3-5 valid trials and CV% before concluding pattern.",
         
-        # Braking Left / Right & RFD
         "pk_br_l": f"{pk_br_l:.0f}", "pk_br_r": f"{pk_br_r:.0f}", "asym_pk_br": asym_badge(pk_br_l, pk_br_r)[0],
         "br_net_l": f"{br_net_l:.1f}", "br_net_r": f"{br_net_r:.1f}", "asym_br_net": asym_badge(br_net_l, br_net_r)[0],
         "br_gross_l": f"{br_gross_l:.1f}", "br_gross_r": f"{br_gross_r:.1f}", "asym_br_gross": asym_badge(br_gross_l, br_gross_r)[0],
@@ -701,7 +768,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
         "rfd100_br_l": f"{rfd100_br_l:.0f}", "rfd100_br_r": f"{rfd100_br_r:.0f}", "asym_rfd100_br": asym_badge(rfd100_br_l, rfd100_br_r)[0],
         "rfd200_br_l": f"{rfd200_br_l:.0f}", "rfd200_br_r": f"{rfd200_br_r:.0f}", "asym_rfd200_br": asym_badge(rfd200_br_l, rfd200_br_r)[0],
 
-        # Propulsion Left / Right & RFD
         "pk_pr_l": f"{pk_pr_l:.0f}", "pk_pr_r": f"{pk_pr_r:.0f}", "asym_pk_pr": asym_badge(pk_pr_l, pk_pr_r)[0],
         "pr_net_l": f"{pr_net_l:.1f}", "pr_net_r": f"{pr_net_r:.1f}", "asym_pr_net": asym_badge(pr_net_l, pr_net_r)[0],
         "pr_gross_l": f"{pr_gross_l:.1f}", "pr_gross_r": f"{pr_gross_r:.1f}", "asym_pr_gross": asym_badge(pr_gross_l, pr_gross_r)[0],
@@ -711,7 +777,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
         "rfd100_pr_l": f"{rfd100_pr_l:.0f}", "rfd100_pr_r": f"{rfd100_pr_r:.0f}", "asym_rfd100_pr": asym_badge(rfd100_pr_l, rfd100_pr_r)[0],
         "rfd200_pr_l": f"{rfd200_pr_l:.0f}", "rfd200_pr_r": f"{rfd200_pr_r:.0f}", "asym_rfd200_pr": asym_badge(rfd200_pr_l, rfd200_pr_r)[0],
 
-        # Quality Checks & Timing
         "fs": f"{fs:.0f}", "zero_off": f"{offset_l:.1f} / {offset_r:.1f} N",
         "cv": f"{cv_val:.2f}", "bw": f"{bw:.2f}", "bw_sd": f"{bw_sd:.2f}",
         "fres": f"{abs(offset_l)+abs(offset_r):.1f}", "fres_l": f"{offset_l:.1f}", "fres_r": f"{offset_r:.1f}",
@@ -721,17 +786,14 @@ if t is not None and f_total is not None and len(f_total) > 0:
         "d_unw": f"{(t_braking - t_start)*1000:.0f}", "d_brk": f"{(t_split - t_braking)*1000:.0f}",
         "d_pro": f"{(t_takeoff - t_split)*1000:.0f}", "d_fly": f"{flight_dur*1000:.0f}", "depth": f"{com_depth:.1f}",
 
-        # Kinematics Curves
         "vel": vel_total[sIdx:lIdx+1], "power": power_wkg[sIdx:tIdx+1],
 
-        # Landing Left / Right & Total Load
         "pk_land_l": f"{pk_land_l:.0f}", "pk_land_r": f"{pk_land_r:.0f}", "asym_pk_land": asym_badge(pk_land_l, pk_land_r)[0],
         "land_imp_l": f"{land_imp_250_l:.1f}", "land_imp_r": f"{land_imp_250_r:.1f}",
         "pk_land_tot": f"{pk_land_tot:.0f}", "pk_land_bw": f"{pk_land_tot/bw:.2f}",
         "load_rate": f"{load_rate:.0f}", "load_rate_bw": f"{load_rate/bw:.1f}",
         "land_imp_250": f"{land_imp_250_tot:.1f}", "ttp_land": f"{ttp_land_ms:.1f}",
 
-        # Research Derived Metrics & Clinical Mapping
         "mean_br_f": f"{mean_br_f/mass:.2f}", "mean_br_f_tot": f"{mean_br_f:.0f}",
         "mean_pr_f": f"{mean_pr_f/mass:.2f}", "mean_pr_f_tot": f"{mean_pr_f:.0f}",
         "mean_br_p": f"{abs(mean_br_p):.2f}", "mean_pr_p": f"{mean_pr_p:.2f}",
@@ -742,7 +804,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
         "base_ch": "No baseline entered" if baseline_jh==0 else f"{((jh_imp_val-baseline_jh)/baseline_jh)*100:+.1f}%",
         "mdc_res": "—" if baseline_jh==0 else ("YES — exceeds MDC" if abs(((jh_imp_val-baseline_jh)/baseline_jh)*100)>=mdc_pct else "NO — within MDC"),
 
-        # Sensitivity Analysis Matrix
         "sens_jh_raw": f"{sens_res['raw']['jh']:.1f}", "sens_jh_20": f"{sens_res['20']['jh']:.1f}", "sens_jh_30": f"{sens_res['30']['jh']:.1f}", "sens_jh_50": f"{sens_res['50']['jh']:.1f}", "sens_jh_sp": f"{calc_spread([sens_res['raw']['jh'], sens_res['20']['jh'], sens_res['30']['jh'], sens_res['50']['jh']]):.1f}%",
         "sens_imp_raw": f"{sens_res['raw']['imp']:.1f}", "sens_imp_20": f"{sens_res['20']['imp']:.1f}", "sens_imp_30": f"{sens_res['30']['imp']:.1f}", "sens_imp_50": f"{sens_res['50']['imp']:.1f}", "sens_imp_sp": f"{calc_spread([sens_res['raw']['imp'], sens_res['20']['imp'], sens_res['30']['imp'], sens_res['50']['imp']]):.1f}%",
         "sens_pk_raw": f"{sens_res['raw']['pk']:.0f}", "sens_pk_20": f"{sens_res['20']['pk']:.0f}", "sens_pk_30": f"{sens_res['30']['pk']:.0f}", "sens_pk_50": f"{sens_res['50']['pk']:.0f}", "sens_pk_sp": f"{calc_spread([sens_res['raw']['pk'], sens_res['20']['pk'], sens_res['30']['pk'], sens_res['50']['pk']]):.1f}%",
