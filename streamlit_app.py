@@ -10,7 +10,7 @@ from parsers import (
     parse_single_csv_cforce,
     parse_musclelab_csv
 )
-from biomechanics import apply_signal_filter, detect_phases_sequential, calculate_metrics, calc_max_win_rfd
+from biomechanics import apply_signal_filter, detect_phases_sequential, calculate_metrics
 from pdf_generator import generate_pdf_report
 
 st.set_page_config(layout="wide", page_title="Free JumpAnz Team - Prima Motion Tech")
