@@ -50,7 +50,7 @@ def calc_impulse(arr, dt):
     """
     if len(arr) < 2:
         return float(np.sum(arr) * dt)
-    return float(np.trapz(arr, dx=dt))
+    return float(np.trapezoid(arr, dx=dt))
 
 def calc_deficit_str(val_l, val_r):
     try:
