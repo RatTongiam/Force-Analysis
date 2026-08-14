@@ -16,74 +16,9 @@ from pdf_generator import generate_pdf_report
 st.set_page_config(layout="wide", page_title="Free JumpAnz Team - Prima Motion Tech")
 
 # -------------------------------------------------------------
-# 1. Sidebar: Presentation, Themes & Clinical Inputs
+# 1. Sidebar: Data Import & File Upload First
 # -------------------------------------------------------------
-st.sidebar.header("🎨 Theme & Presentation")
-
-app_theme = st.sidebar.selectbox(
-    "Select Dashboard Theme",
-    ["Modern Coach (Dashboard)", "Classic Purple (Original)"],
-    index=0
-)
-
-report_grouping = st.sidebar.radio(
-    "📊 Metric Grouping Mode",
-    ["Movement Sub-phases (Phase-by-Phase)", "Variance Explained (Anicic et al., 2023)"],
-    index=0
-)
-
-if "Coach" in app_theme:
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🏥 Clinical & Research Inputs")
-    involved_limb = st.sidebar.selectbox("Involved Limb", ["None / Athlete", "Left", "Right"], index=0)
-    baseline_jh = st.sidebar.number_input("Baseline JH (cm, optional)", value=0.0, step=0.5, format="%.1f")
-    mdc_pct = st.sidebar.number_input("MDC / Meaningful Change (%)", value=5.0, step=0.5, format="%.1f")
-else:
-    involved_limb = "None / Athlete"
-    baseline_jh = 0.0
-    mdc_pct = 5.0
-
-# Theme Color Palettes & CSS Injection
-if "Coach" in app_theme:
-    col_l_hex = "#2f6fed"
-    col_r_hex = "#ed7d31"
-    col_tot_hex = "#11395f"
-    st.markdown("""
-        <style>
-        .coach-header {
-            background: linear-gradient(120deg, #0d3154, #1c507f);
-            color: #ffffff; padding: 18px 22px; border-radius: 12px; margin-bottom: 15px;
-        }
-        .kpi-card {
-            background: #ffffff; border: 1px solid #e4e9f1; border-radius: 12px;
-            padding: 12px 14px; box-shadow: 0 2px 6px rgba(16,24,40,.04); text-align: center;
-        }
-        .kpi-metric { font-size: 24px; font-weight: 800; color: #11395f; margin: 4px 0; }
-        .kpi-sub { font-size: 11px; color: #667085; font-weight: 600; }
-        .coach-box {
-            background: #f7fbff; border-left: 5px solid #11395f; padding: 14px;
-            border-radius: 8px; font-size: 13.5px; line-height: 1.5; margin-bottom: 8px;
-        }
-        .coach-action {
-            background: #fff8f1; border: 1px solid #f5d2b7; padding: 9px 12px;
-            border-radius: 8px; font-size: 12.5px; margin-top: 6px; color: #7c2d12;
-        }
-        .qc-banner-pass { background: #e9f7f0; color: #167a55; border: 1px solid #c9ead9; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; }
-        .qc-banner-review { background: #fff4dc; color: #8a5a00; border: 1px solid #f2dcaa; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; }
-        .qc-banner-reject { background: #fdecec; color: #a52b2b; border: 1px solid #f2caca; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; }
-        .status-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 800; }
-        .status-low { background: #e9f7f0; color: #167a55; }
-        .status-watch { background: #fff2d6; color: #9b6700; }
-        .status-flag { background: #fdecec; color: #b83232; }
-        </style>
-    """, unsafe_allow_html=True)
-else:
-    col_l_hex = "#818cf8"
-    col_r_hex = "#f87171"
-    col_tot_hex = "#4d2994"
-
-st.sidebar.markdown("---")
-st.sidebar.header("📁 Data Import & Settings")
+st.sidebar.header("📁 1. Data Import & File Upload")
 
 data_mode = st.sidebar.radio("Select Input Mode", [
     "MuscleLab CSV",
@@ -92,39 +27,6 @@ data_mode = st.sidebar.radio("Select Input Mode", [
     "VALD ForceDecks CSV", 
     "C-Force Performance CSV"
 ])
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("Signal Filtering Options")
-
-filter_type = st.sidebar.selectbox(
-    "Select Filter Algorithm",
-    ["Butterworth LPF", "Moving Average", "Raw Data (None)"],
-    index=0
-)
-
-if filter_type == "Butterworth LPF":
-    cutoff_freq = st.sidebar.slider("Cutoff Frequency (Hz)", min_value=5.0, max_value=100.0, value=50.0, step=5.0)
-    filter_size = 15
-elif filter_type == "Moving Average":
-    filter_size = st.sidebar.selectbox("Window Size (Frames)", [1, 7, 15, 31], index=2)
-    cutoff_freq = 50.0
-else:
-    cutoff_freq = 50.0
-    filter_size = 1
-
-threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
-
-# Dashboard Header
-if "Coach" in app_theme:
-    st.markdown("""
-        <div class="coach-header">
-            <h2 style="margin:0; font-size:24px; color:#fff;">CMJ Coach Analyzer v4 — Research & Clinical</h2>
-            <p style="margin:4px 0 0; font-size:12px; color:#dce8f5;">PRIMA MOTION TECHNOLOGY • Comprehensive Biomechanics & Dual-Plate Asymmetry Engine</p>
-        </div>
-    """, unsafe_allow_html=True)
-else:
-    st.title("Free JumpAnz Team - Biomechanics Analysis")
-    st.caption("PRIMA MOTION TECHNOLOGY — Technology that unlocks scientific insight")
 
 dt, t, f_left, f_right, f_total = None, None, None, None, None
 file_signature = None
@@ -215,6 +117,106 @@ elif data_mode == "C-Force Performance CSV":
         except Exception as e:
             st.error(f"Error parsing Single CSV file: {e}")
 
+# -------------------------------------------------------------
+# 2. Sidebar: Signal Filtering Options
+# -------------------------------------------------------------
+st.sidebar.markdown("---")
+st.sidebar.header("⚙️ 2. Signal Filtering")
+
+filter_type = st.sidebar.selectbox(
+    "Select Filter Algorithm",
+    ["Butterworth LPF", "Moving Average", "Raw Data (None)"],
+    index=0
+)
+
+if filter_type == "Butterworth LPF":
+    cutoff_freq = st.sidebar.slider("Cutoff Frequency (Hz)", min_value=5.0, max_value=100.0, value=50.0, step=5.0)
+    filter_size = 15
+elif filter_type == "Moving Average":
+    filter_size = st.sidebar.selectbox("Window Size (Frames)", [1, 7, 15, 31], index=2)
+    cutoff_freq = 50.0
+else:
+    cutoff_freq = 50.0
+    filter_size = 1
+
+threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
+
+# -------------------------------------------------------------
+# 3. Sidebar: Theme Selection (Auto Metric Grouping)
+# -------------------------------------------------------------
+st.sidebar.markdown("---")
+st.sidebar.header("🎨 3. Presentation Theme")
+
+app_theme = st.sidebar.selectbox(
+    "Select Dashboard Theme",
+    ["Modern Coach (Dashboard)", "Classic Purple (Original)"],
+    index=0
+)
+
+# ผูก Metric Grouping เข้ากับ Theme อัตโนมัติ
+if "Coach" in app_theme:
+    group_mode_param = "phase"
+    involved_limb = st.sidebar.selectbox("Involved Limb", ["None / Athlete", "Left", "Right"], index=0)
+    baseline_jh = st.sidebar.number_input("Baseline JH (cm, optional)", value=0.0, step=0.5, format="%.1f")
+    mdc_pct = st.sidebar.number_input("MDC / Meaningful Change (%)", value=5.0, step=0.5, format="%.1f")
+else:
+    group_mode_param = "variance"
+    involved_limb = "None / Athlete"
+    baseline_jh = 0.0
+    mdc_pct = 5.0
+
+# Dynamic Styling
+if "Coach" in app_theme:
+    col_l_hex = "#2f6fed"
+    col_r_hex = "#ed7d31"
+    col_tot_hex = "#11395f"
+    st.markdown("""
+        <style>
+        .coach-header {
+            background: linear-gradient(120deg, #0d3154, #1c507f);
+            color: #ffffff; padding: 18px 22px; border-radius: 12px; margin-bottom: 15px;
+        }
+        .kpi-card {
+            background: #ffffff; border: 1px solid #e4e9f1; border-radius: 12px;
+            padding: 12px 14px; box-shadow: 0 2px 6px rgba(16,24,40,.04); text-align: center;
+        }
+        .kpi-metric { font-size: 24px; font-weight: 800; color: #11395f; margin: 4px 0; }
+        .kpi-sub { font-size: 11px; color: #667085; font-weight: 600; }
+        .coach-box {
+            background: #f7fbff; border-left: 5px solid #11395f; padding: 14px;
+            border-radius: 8px; font-size: 13.5px; line-height: 1.5; margin-bottom: 8px;
+        }
+        .coach-action {
+            background: #fff8f1; border: 1px solid #f5d2b7; padding: 9px 12px;
+            border-radius: 8px; font-size: 12.5px; margin-top: 6px; color: #7c2d12;
+        }
+        .qc-banner-pass { background: #e9f7f0; color: #167a55; border: 1px solid #c9ead9; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; }
+        .qc-banner-review { background: #fff4dc; color: #8a5a00; border: 1px solid #f2dcaa; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; }
+        .qc-banner-reject { background: #fdecec; color: #a52b2b; border: 1px solid #f2caca; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; }
+        .status-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 800; }
+        .status-low { background: #e9f7f0; color: #167a55; }
+        .status-watch { background: #fff2d6; color: #9b6700; }
+        .status-flag { background: #fdecec; color: #b83232; }
+        </style>
+    """, unsafe_allow_html=True)
+else:
+    col_l_hex = "#818cf8"
+    col_r_hex = "#f87171"
+    col_tot_hex = "#4d2994"
+
+# Dashboard Main Header
+if "Coach" in app_theme:
+    st.markdown("""
+        <div class="coach-header">
+            <h2 style="margin:0; font-size:24px; color:#fff;">CMJ Coach Analyzer v4 — Research & Clinical</h2>
+            <p style="margin:4px 0 0; font-size:12px; color:#dce8f5;">PRIMA MOTION TECHNOLOGY • Comprehensive Biomechanics & Dual-Plate Asymmetry Engine</p>
+        </div>
+    """, unsafe_allow_html=True)
+else:
+    st.title("Free JumpAnz Team - Biomechanics Analysis")
+    st.caption("PRIMA MOTION TECHNOLOGY — Technology that unlocks scientific insight")
+
+# Helper Functions
 def asym_badge(val_l, val_r):
     try:
         vl, vr = float(val_l), float(val_r)
@@ -307,17 +309,12 @@ if t is not None and f_total is not None and len(f_total) > 0:
     tIdx = min(max(0, int(round((t_takeoff - t[0]) / dt_val))), n_samples - 1)
     lIdx = min(max(0, int(round((t_landing - t[0]) / dt_val))), n_samples - 1)
 
-    group_mode_param = "phase" if "Phase-by-Phase" in report_grouping else "variance"
-
     report = calculate_metrics(
         t, f_total, f_left, f_right, dt_val, sIdx, bIdx, zIdx, tIdx, lIdx, 
         filter_type=filter_type, cutoff=cutoff_freq, offsets=offsets,
         lIdx_l=lIdx_l, lIdx_r=lIdx_r, group_by=group_mode_param
     )
 
-    # -------------------------------------------------------------
-    # 2. General Biomechanical Calculations (Always Executed)
-    # -------------------------------------------------------------
     bw = np.mean(sf[:quiet_samples])
     bw_sd = np.std(sf[:quiet_samples])
     mass = bw / g if bw > 0 else 70.0
@@ -421,7 +418,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
     else:
         headline = "การแบ่งแรงซ้าย–ขวาช่วง propulsion อยู่ในช่วงค่อนข้างสมดุลของ trial นี้"
 
-    # Sensitivity Analysis Recomputation
     sens_res = {}
     for fc_test, name in [(None, "raw"), (20.0, "20"), (30.0, "30"), (50.0, "50")]:
         filt_sf = f_total_zeroed if fc_test is None else apply_signal_filter(f_total_zeroed, "Butterworth LPF", cutoff=fc_test, fs=fs)
@@ -444,7 +440,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
         return (abs(mx - mn) / mid * 100.0) if mid > 0 else 0.0
 
     # -------------------------------------------------------------
-    # 3. Modern Coach Top KPI Scorecards
+    # UI Section: Top KPI Scorecards (Coach Theme Only)
     # -------------------------------------------------------------
     if "Coach" in app_theme:
         k1, k2, k3, k4 = st.columns(4)
@@ -459,7 +455,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
         st.markdown("<br>", unsafe_allow_html=True)
 
     # -------------------------------------------------------------
-    # 4. Interactive Force-Time Plot (+ Coach Snapshot if Coach Theme)
+    # UI Section: Interactive Force-Time Plot
     # -------------------------------------------------------------
     if "Coach" in app_theme:
         col_g, col_s = st.columns([8, 4])
@@ -527,7 +523,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
             st.markdown(f'<div class="coach-action">ใช้ค่าเฉลี่ย 3–5 valid trials และ CV% ก่อนสรุป pattern ระยะยาว</div>', unsafe_allow_html=True)
 
     # -------------------------------------------------------------
-    # 5. Timeline Sliders (Always Executed)
+    # UI Section: Timeline Sliders
     # -------------------------------------------------------------
     st.markdown("##### 🎚️ Phase Boundary Timeline Controls")
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -567,7 +563,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
                 st.rerun()
 
     # -------------------------------------------------------------
-    # 6. Modern Coach Dashboard Modules (When Coach Theme is Selected)
+    # UI Section: Modern Coach Analysis Panels (Coach Theme Only)
     # -------------------------------------------------------------
     if "Coach" in app_theme:
         st.markdown("---")
@@ -694,7 +690,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
         st.markdown(interp_txt)
 
     # -------------------------------------------------------------
-    # 7. Asymmetry % Profile Graph (Always Executed for Both Themes)
+    # 7. Asymmetry % Profile Graph (Always Executed)
     # -------------------------------------------------------------
     st.markdown("---")
     max_sl_sr = np.maximum(sl, sr)
