@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 from scipy.signal import butter, filtfilt
-from scipy.ndimage import label
 
 def butter_lowpass_filter(data, cutoff=10.0, fs=2000.0, order=4):
     if len(data) <= order * 3:
@@ -24,23 +23,17 @@ def apply_signal_filter(data, filter_type="Butterworth LPF", cutoff=10.0, fs=100
     if len(data_arr) == 0:
         return data_arr
 
-    sorted_forces = np.sort(data_arr)
-    min_samples = max(10, int(0.05 * len(data_arr)))
-    baseline_offset = np.mean(sorted_forces[:min_samples])
-    calibrated_data = data_arr - baseline_offset
-
     if filter_type == "Butterworth LPF":
-        filtered = butter_lowpass_filter(calibrated_data, cutoff=cutoff, fs=fs, order=4)
+        filtered = butter_lowpass_filter(data_arr, cutoff=cutoff, fs=fs, order=4)
     elif filter_type == "Moving Average":
         if window_size <= 1:
-            filtered = calibrated_data
+            filtered = data_arr
         else:
-            filtered = pd.Series(calibrated_data).rolling(window=window_size, center=True, min_periods=1).mean().values
+            filtered = pd.Series(data_arr).rolling(window=window_size, center=True, min_periods=1).mean().values
     else:
-        filtered = calibrated_data
+        filtered = data_arr
 
-    cleaned_signal = np.maximum(0.0, filtered)
-    return cleaned_signal
+    return np.maximum(0.0, filtered)
 
 def moving_average(arr, window):
     if window <= 1:
@@ -65,55 +58,93 @@ def calc_deficit_str(val_l, val_r):
     except (ValueError, TypeError):
         return "-"
 
-def detect_phases_sequential(t, sf_raw, dt, quiet_samples, filter_type="Butterworth LPF", cutoff=10.0):
-    n_samples = len(sf_raw)
+def detect_phases_sequential(t, sl_raw, sr_raw, dt, quiet_samples=None, filter_type="Butterworth LPF", cutoff=10.0):
+    """
+    ตัดเฟส Take-off และ Landing บน RAW Data ที่ Correct Baseline ใน Flight Phase แล้ว
+    เพื่อป้องกันผลกระทบจาก Filter Ringing และ Gibbs Phenomenon
+    """
+    n_samples = len(sl_raw)
     fs = 1.0 / dt
     g = 9.80665
+    sf_raw = sl_raw + sr_raw
 
-    sf = apply_signal_filter(sf_raw, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
+    # 1. กรองสัญญาณชั่วคราวเพื่อค้นหาตำแหน่งกึ่งกลางช่วงบิน (Flight Center)
+    sf_temp = apply_signal_filter(sf_raw, filter_type=filter_type, cutoff=cutoff, fs=fs)
+    win_search = int(0.15 * fs)
+    if len(sf_temp) > win_search:
+        rolling_min = pd.Series(sf_temp).rolling(window=win_search, center=True).mean().values
+        search_start = int(0.3 * fs)
+        if len(rolling_min) > search_start:
+            flight_mid_idx = np.argmin(rolling_min[search_start:]) + search_start
+        else:
+            flight_mid_idx = int(0.5 * n_samples)
+    else:
+        flight_mid_idx = int(0.5 * n_samples)
+
+    # 2. ทำ Flight Baseline Drift Correction แยกซ้าย-ขวา ให้มีค่าเป็น 0 N แท้จริง
+    calib_start = max(0, flight_mid_idx - int(0.04 * fs))
+    calib_end = min(n_samples, flight_mid_idx + int(0.04 * fs))
     
-    win_bw = min(int(1.0 * fs), n_samples)
-    bw = np.mean(sf[:win_bw])
-    force_sd = np.std(sf[:win_bw])
+    offset_l = np.mean(sl_raw[calib_start:calib_end]) if calib_end > calib_start else 0.0
+    offset_r = np.mean(sr_raw[calib_start:calib_end]) if calib_end > calib_start else 0.0
+
+    sl_zeroed = np.maximum(0.0, sl_raw - offset_l)
+    sr_zeroed = np.maximum(0.0, sr_raw - offset_r)
+    sf_zeroed = sl_zeroed + sr_zeroed
+
+    # 3. Detect Take-off & Landing บนสัญญาณ Zeroed RAW Data
+    thresh_single = 10.0  # 10 N ต่อข้าง
+    thresh_total = 20.0   # 20 N รวม
+    hold_samples = max(2, int(0.005 * fs))  # เกณฑ์ยืนยัน 5 ms
+
+    # ถอยหลังหา Take-off ของระบบ
+    tIdx_auto = flight_mid_idx
+    for i in range(flight_mid_idx, int(0.2 * fs), -1):
+        if np.all(sf_zeroed[max(0, i - hold_samples) : i] >= thresh_total):
+            tIdx_auto = i
+            break
+
+    # เดินหน้าหา System Landing (ขาแรกสัมผัสพื้น)
+    lIdx_auto = flight_mid_idx
+    for i in range(flight_mid_idx, n_samples - hold_samples):
+        if np.all(sf_zeroed[i : i + hold_samples] >= thresh_total):
+            lIdx_auto = i
+            break
+
+    # ตรวจจับ Landing แยกขาเพื่อเช็ค Initial Touchdown Asymmetry
+    lIdx_l = flight_mid_idx
+    for i in range(flight_mid_idx, n_samples - hold_samples):
+        if np.all(sl_zeroed[i : i + hold_samples] >= thresh_single):
+            lIdx_l = i
+            break
+
+    lIdx_r = flight_mid_idx
+    for i in range(flight_mid_idx, n_samples - hold_samples):
+        if np.all(sr_zeroed[i : i + hold_samples] >= thresh_single):
+            lIdx_r = i
+            break
+
+    # 4. กรองสัญญาณที่ Zeroed แล้ว สำหรับตัดเฟส Unweighting, Braking, Propulsive
+    sf_filtered = apply_signal_filter(sf_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs)
+
+    win_bw = min(int(1.0 * fs), n_samples) if quiet_samples is None else quiet_samples
+    bw = np.mean(sf_filtered[:win_bw])
+    force_sd = np.std(sf_filtered[:win_bw])
     mass = bw / g if bw > 0 else 70.0
-
-    flight_threshold = 25.0
-    flight_mask = sf < flight_threshold
-    labeled, num_features = label(flight_mask)
-    
-    tIdx_auto = None
-    lIdx_auto = None
-
-    if num_features > 0:
-        valid_blocks = []
-        for i in range(1, num_features + 1):
-            idxs = np.where(labeled == i)[0]
-            if len(idxs) > int(0.10 * fs) and idxs[0] > int(0.5 * fs):
-                valid_blocks.append((i, len(idxs), idxs[0], idxs[-1]))
-        
-        if valid_blocks:
-            best_block = max(valid_blocks, key=lambda x: x[1])
-            tIdx_auto = best_block[2]
-            lIdx_auto = best_block[3]
-
-    if tIdx_auto is None:
-        global_peak_idx = int(0.5 * fs) + np.argmax(sf[int(0.5 * fs):])
-        tIdx_auto = max(int(0.5 * fs), global_peak_idx - int(0.2 * fs))
-        lIdx_auto = min(n_samples - 1, tIdx_auto + int(0.4 * fs))
 
     prop_search_start = max(0, tIdx_auto - int(1.5 * fs))
     if tIdx_auto > prop_search_start:
-        peak_prop_idx = prop_search_start + np.argmax(sf[prop_search_start:tIdx_auto])
+        peak_prop_idx = prop_search_start + np.argmax(sf_filtered[prop_search_start:tIdx_auto])
     else:
         peak_prop_idx = max(0, tIdx_auto - 1)
 
     if peak_prop_idx > prop_search_start:
-        bIdx_auto = prop_search_start + np.argmin(sf[prop_search_start:peak_prop_idx])
+        bIdx_auto = prop_search_start + np.argmin(sf_filtered[prop_search_start:peak_prop_idx])
     else:
         bIdx_auto = max(0, peak_prop_idx - int(0.2 * fs))
 
     threshold_bw = max(bw * 0.98, bw - 3 * force_sd)
-    back_search_window = sf[:bIdx_auto]
+    back_search_window = sf_filtered[:bIdx_auto]
     bw_crossings = np.where(back_search_window >= threshold_bw)[0]
     
     if len(bw_crossings) > 0:
@@ -121,7 +152,7 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples, filter_type="Butterwo
     else:
         sIdx_auto = max(0, bIdx_auto - int(0.4 * fs))
 
-    vel_temp = np.cumsum((sf[sIdx_auto:tIdx_auto + 1] - bw) / mass) * dt
+    vel_temp = np.cumsum((sf_filtered[sIdx_auto:tIdx_auto + 1] - bw) / mass) * dt
     b_rel = max(0, bIdx_auto - sIdx_auto)
     zero_crossings = np.where(vel_temp[b_rel:] >= 0)[0]
     if len(zero_crossings) > 0:
@@ -129,22 +160,29 @@ def detect_phases_sequential(t, sf_raw, dt, quiet_samples, filter_type="Butterwo
     else:
         zIdx_auto = bIdx_auto
 
+    # ปรับ Boundary ป้องกัน Index ผิดพลาด
     tIdx_auto = min(tIdx_auto, n_samples - 1)
     lIdx_auto = min(lIdx_auto, n_samples - 1)
     zIdx_auto = min(zIdx_auto, tIdx_auto)
     bIdx_auto = min(bIdx_auto, zIdx_auto)
     sIdx_auto = min(sIdx_auto, bIdx_auto)
 
-    return sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto
+    return sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto, lIdx_l, lIdx_r, (offset_l, offset_r)
 
-def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lIdx, filter_type="Butterworth LPF", cutoff=10.0):
+def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lIdx, filter_type="Butterworth LPF", cutoff=10.0, offsets=(0.0, 0.0), lIdx_l=None, lIdx_r=None):
     n_samples = len(sf_raw)
     fs = 1.0 / dt
     g = 9.80665
 
-    sf = apply_signal_filter(sf_raw, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
-    sl = apply_signal_filter(sl_raw, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
-    sr = apply_signal_filter(sr_raw, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
+    offset_l, offset_r = offsets
+    sl_zeroed = np.maximum(0.0, sl_raw - offset_l)
+    sr_zeroed = np.maximum(0.0, sr_raw - offset_r)
+    sf_zeroed = sl_zeroed + sr_zeroed
+
+    # กรองสัญญาณข้อมูลที่ชดเชย Zero Baseline แล้วเพื่อนำไปคำนวณ Metrics
+    sf = apply_signal_filter(sf_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
+    sl = apply_signal_filter(sl_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
+    sr = apply_signal_filter(sr_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
 
     quiet_samples = max(1, min(int(0.5 / dt), n_samples))
     
@@ -152,7 +190,7 @@ def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lId
     bw_left = np.mean(sl[:quiet_samples])
     bw_right = np.mean(sr[:quiet_samples])
     
-    mass = bw / g
+    mass = bw / g if bw > 0 else 70.0
 
     vel_total = np.zeros(n_samples)
     disp_total = np.zeros(n_samples)
@@ -252,15 +290,22 @@ def calculate_metrics(t, sf_raw, sl_raw, sr_raw, dt, sIdx, bIdx, zIdx, tIdx, lId
     leg_stiffness = (peak_brak_f / (com_depth / 100.0)) if com_depth > 0 else 0.0
     flight_jump_ratio = flight_dur / contraction_time if contraction_time > 0 else 0.0
 
+    # Initial Contact Time Asymmetry (ms)
+    touchdown_delay_ms = "-"
+    if lIdx_l is not None and lIdx_r is not None:
+        diff_td = (t[lIdx_l] - t[lIdx_r]) * 1000.0
+        touchdown_delay_ms = f"{diff_td:+.1f} ms"
+
     return {
         "1. Performance Component (59% Variance)": {
             "Jump Height - Flight Time (cm)": {"Left": "-", "Right": "-", "Total": f"{jh_flight:.1f}", "Deficit": "-"},
             "Jump Height - Impulse-Momentum (cm)": {"Left": "-", "Right": "-", "Total": f"{jh_impulse:.1f}", "Deficit": "-"},
-            "Flight Phase Duration (s)": {"Left": "-", "Right": "-", "Total": f"{flight_dur:.2f}", "Deficit": "-"},
+            "Flight Phase Duration (s)": {"Left": "-", "Right": "-", "Total": f"{flight_dur:.3f}", "Deficit": "-"},
             "Take-off Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{v_takeoff:.2f}", "Deficit": "-"},
             "Peak Propulsive Velocity (m/s)": {"Left": "-", "Right": "-", "Total": f"{peak_v_prop:.2f}", "Deficit": "-"},
             "RSI Modified (AU)": {"Left": "-", "Right": "-", "Total": f"{rsi_modified:.2f}", "Deficit": "-"},
             "Landing Impulse (N·s)": {"Left": f"{land_impulse_l:.0f}", "Right": f"{land_impulse_r:.0f}", "Total": f"{land_impulse:.0f}", "Deficit": calc_deficit_str(land_impulse_l, land_impulse_r)},
+            "Initial Touchdown Delay (L-R)": {"Left": f"{t[lIdx_l]:.3f} s" if lIdx_l else "-", "Right": f"{t[lIdx_r]:.3f} s" if lIdx_r else "-", "Total": touchdown_delay_ms, "Deficit": "-"},
             "Peak Propulsive Power (W)": {"Left": "-", "Right": "-", "Total": f"{peak_prop_p:.0f}", "Deficit": "-"},
             "Mean Propulsive Power (W)": {"Left": "-", "Right": "-", "Total": f"{avg_prop_p:.0f}", "Deficit": "-"},
             "Propulsive Impulse (N·s)": {"Left": f"{prop_impulse_l:.0f}", "Right": f"{prop_impulse_r:.0f}", "Total": f"{prop_impulse:.0f}", "Deficit": calc_deficit_str(prop_impulse_l, prop_impulse_r)},
