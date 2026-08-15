@@ -142,7 +142,7 @@ else:
 threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
 
 # -------------------------------------------------------------
-# 3. Sidebar: Theme Selection (Auto Metric Grouping)
+# 3. Sidebar: Presentation Theme & Clinical Setup
 # -------------------------------------------------------------
 st.sidebar.markdown("---")
 st.sidebar.header("🎨 3. Presentation Theme")
@@ -153,7 +153,6 @@ app_theme = st.sidebar.selectbox(
     index=0
 )
 
-# ผูก Metric Grouping เข้ากับ Theme อัตโนมัติ
 if "Coach" in app_theme:
     group_mode_param = "phase"
     involved_limb = st.sidebar.selectbox("Involved Limb", ["None / Athlete", "Left", "Right"], index=0)
@@ -165,7 +164,6 @@ else:
     baseline_jh = 0.0
     mdc_pct = 5.0
 
-# Dynamic Styling
 if "Coach" in app_theme:
     col_l_hex = "#2f6fed"
     col_r_hex = "#ed7d31"
@@ -204,7 +202,6 @@ else:
     col_r_hex = "#f87171"
     col_tot_hex = "#4d2994"
 
-# Dashboard Main Header
 if "Coach" in app_theme:
     st.markdown("""
         <div class="coach-header">
@@ -216,20 +213,16 @@ else:
     st.title("Free JumpAnz Team - Biomechanics Analysis")
     st.caption("PRIMA MOTION TECHNOLOGY — Technology that unlocks scientific insight")
 
-# Helper Functions with Robust Asymmetry and RFD Calculations
+# Standard Scientific Helper Functions
 def asym_badge(val_l, val_r):
+    """
+    Standard Directional Asymmetry: 100 * (Left - Right) / max(|Left|, |Right|)
+    """
     try:
         vl, vr = float(val_l), float(val_r)
-        if vl == 0 and vr == 0:
-            return "-", '<span class="status-pill status-low">Equal</span>'
-        
-        # ป้องกัน Asymmetry ทะลุเกิน 100% กรณีข้างหนึ่งบวก อีกข้างลบ
-        if (vl > 0 and vr < 0) or (vl < 0 and vr > 0):
-            txt = f"Opposite Slope ({abs(vl):.0f} vs {abs(vr):.0f})"
-            badge = '<span class="status-pill status-flag">Flag</span>'
-            return txt, badge
-
         mx = max(abs(vl), abs(vr))
+        if mx == 0:
+            return "-", '<span class="status-pill status-low">Equal</span>'
         diff = ((vl - vr) / mx) * 100.0
         txt = f"{abs(diff):.1f}% {'Left' if diff > 0 else 'Right'} higher"
         cls = "status-low" if abs(diff) < 10 else ("status-watch" if abs(diff) < 15 else "status-flag")
@@ -239,6 +232,9 @@ def asym_badge(val_l, val_r):
         return "-", "-"
 
 def calc_rfd_start(arr, s_idx, dt, ms):
+    """
+    Standard Time-Interval RFD: (F(s + dt) - F(s)) / dt
+    """
     n_pts = int((ms / 1000.0) / dt)
     if s_idx + n_pts < len(arr):
         return (arr[s_idx + n_pts] - arr[s_idx]) / (ms / 1000.0)
@@ -246,15 +242,14 @@ def calc_rfd_start(arr, s_idx, dt, ms):
 
 def calc_max_win_rfd(arr, s_idx, e_idx, dt, win_ms=20):
     """
-    คำนวณ Maximum Positive Rate of Force Development ในหน้าต่างเวลาเคลื่อนที่
+    Standard Maximum Sliding Window RFD: max((F[i+w] - F[i]) / (w*dt)) without clipping
     """
     w = max(1, int((win_ms / 1000.0) / dt))
     if e_idx - s_idx <= w:
         return 0.0
     seg = arr[s_idx:e_idx+1]
     slopes = (seg[w:] - seg[:-w]) / (w * dt)
-    pos_slopes = slopes[slopes > 0]
-    return float(np.max(pos_slopes)) if len(pos_slopes) > 0 else 0.0
+    return float(np.max(slopes)) if len(slopes) > 0 else 0.0
 
 if t is not None and f_total is not None and len(f_total) > 0:
     dt_val = float(dt) if dt is not None and dt > 0 else 0.001
@@ -264,6 +259,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     n_samples = len(f_total)
     quiet_samples = max(1, min(int(0.5 / dt_val), n_samples))
 
+    # Single-System Phase Detection on Zeroed Data
     sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto, lIdx_l, lIdx_r, offsets = detect_phases_sequential(
         t, f_total, dt_val, quiet_samples=quiet_samples, 
         filter_type=filter_type, cutoff=cutoff_freq, 
@@ -326,9 +322,6 @@ if t is not None and f_total is not None and len(f_total) > 0:
         lIdx_l=lIdx_l, lIdx_r=lIdx_r, group_by=group_mode_param
     )
 
-    # -------------------------------------------------------------
-    # 2. General Biomechanical Calculations (Always Executed)
-    # -------------------------------------------------------------
     bw = np.mean(sf[:quiet_samples])
     bw_sd = np.std(sf[:quiet_samples])
     mass = bw / g if bw > 0 else 70.0
@@ -370,6 +363,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     pk_pr_l = np.max(sl[zIdx:tIdx+1]) if tIdx > zIdx else 0.0
     pk_pr_r = np.max(sr[zIdx:tIdx+1]) if tIdx > zIdx else 0.0
 
+    # Unclipped Strict Mathematical RFD
     avg_rfd_br_l = (pk_br_l - sl[bIdx]) / ((zIdx - bIdx) * dt_val) if zIdx > bIdx else 0.0
     avg_rfd_br_r = (pk_br_r - sr[bIdx]) / ((zIdx - bIdx) * dt_val) if zIdx > bIdx else 0.0
     avg_rfd_pr_l = (pk_pr_l - sl[zIdx]) / ((tIdx - zIdx) * dt_val) if tIdx > zIdx else 0.0
@@ -761,7 +755,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     
     st.dataframe(pd.DataFrame(table_rows), width="stretch", hide_index=True)
 
-    # Package Coach PDF Context with Direct Dashboard Thai Strings
+    # Package Coach PDF Context with Standard Alignment
     coach_pdf_context = {
         "jh_imp": f"{jh_imp_val:.1f}", "jh_flt": f"{jh_flt_val:.1f}", "rsi": f"{rsi_val:.2f}", "ppk": f"{ppk_wkg:.1f}",
         "headline": headline,
