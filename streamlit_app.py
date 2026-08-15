@@ -10,13 +10,7 @@ from parsers import (
     parse_single_csv_cforce,
     parse_musclelab_csv
 )
-from biomechanics import (
-    apply_signal_filter, 
-    detect_phases_sequential, 
-    calculate_metrics,
-    calc_rfd_start,
-    calc_max_win_rfd
-)
+from biomechanics import apply_signal_filter, detect_phases_sequential, calculate_metrics
 from pdf_generator import generate_pdf_report
 
 st.set_page_config(layout="wide", page_title="Free JumpAnz Team - Prima Motion Tech")
@@ -159,6 +153,7 @@ app_theme = st.sidebar.selectbox(
     index=0
 )
 
+# ผูก Metric Grouping เข้ากับ Theme อัตโนมัติ
 if "Coach" in app_theme:
     group_mode_param = "phase"
     involved_limb = st.sidebar.selectbox("Involved Limb", ["None / Athlete", "Left", "Right"], index=0)
@@ -170,46 +165,39 @@ else:
     baseline_jh = 0.0
     mdc_pct = 5.0
 
-# -------------------------------------------------------------
-# 4. Sidebar: Developer Diagnostics Suite (Self-Test)
-# -------------------------------------------------------------
-st.sidebar.markdown("---")
-st.sidebar.header("🛠️ Developer Diagnostics")
-run_self_test = st.sidebar.checkbox("🧪 Run System Self-Tests", value=False)
-
 # Dynamic Styling
 if "Coach" in app_theme:
     col_l_hex = "#2f6fed"
     col_r_hex = "#ed7d31"
     col_tot_hex = "#11395f"
     st.markdown("""
-    <style>
-    .coach-header {
-        background: linear-gradient(120deg, #0d3154, #1c507f);
-        color: #ffffff; padding: 18px 22px; border-radius: 12px; margin-bottom: 15px;
-    }
-    .kpi-card {
-        background: #ffffff; border: 1px solid #e4e9f1; border-radius: 12px;
-        padding: 12px 14px; box-shadow: 0 2px 6px rgba(16,24,40,.04); text-align: center;
-    }
-    .kpi-metric { font-size: 24px; font-weight: 800; color: #11395f; margin: 4px 0; }
-    .kpi-sub { font-size: 11px; color: #667085; font-weight: 600; }
-    .coach-box {
-        background: #f7fbff; border-left: 5px solid #11395f; padding: 14px;
-        border-radius: 8px; font-size: 13.5px; line-height: 1.5; margin-bottom: 8px;
-    }
-    .coach-action {
-        background: #fff8f1; border: 1px solid #f5d2b7; padding: 9px 12px;
-        border-radius: 8px; font-size: 12.5px; margin-top: 6px; color: #7c2d12;
-    }
-    .qc-banner-pass { background: #e9f7f0; color: #167a55; border: 1px solid #c9ead9; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; }
-    .qc-banner-review { background: #fff4dc; color: #8a5a00; border: 1px solid #f2dcaa; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; }
-    .qc-banner-reject { background: #fdecec; color: #a52b2b; border: 1px solid #f2caca; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; }
-    .status-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 800; }
-    .status-low { background: #e9f7f0; color: #167a55; }
-    .status-watch { background: #fff2d6; color: #9b6700; }
-    .status-flag { background: #fdecec; color: #b83232; }
-    </style>
+        <style>
+        .coach-header {
+            background: linear-gradient(120deg, #0d3154, #1c507f);
+            color: #ffffff; padding: 18px 22px; border-radius: 12px; margin-bottom: 15px;
+        }
+        .kpi-card {
+            background: #ffffff; border: 1px solid #e4e9f1; border-radius: 12px;
+            padding: 12px 14px; box-shadow: 0 2px 6px rgba(16,24,40,.04); text-align: center;
+        }
+        .kpi-metric { font-size: 24px; font-weight: 800; color: #11395f; margin: 4px 0; }
+        .kpi-sub { font-size: 11px; color: #667085; font-weight: 600; }
+        .coach-box {
+            background: #f7fbff; border-left: 5px solid #11395f; padding: 14px;
+            border-radius: 8px; font-size: 13.5px; line-height: 1.5; margin-bottom: 8px;
+        }
+        .coach-action {
+            background: #fff8f1; border: 1px solid #f5d2b7; padding: 9px 12px;
+            border-radius: 8px; font-size: 12.5px; margin-top: 6px; color: #7c2d12;
+        }
+        .qc-banner-pass { background: #e9f7f0; color: #167a55; border: 1px solid #c9ead9; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; }
+        .qc-banner-review { background: #fff4dc; color: #8a5a00; border: 1px solid #f2dcaa; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; }
+        .qc-banner-reject { background: #fdecec; color: #a52b2b; border: 1px solid #f2caca; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; }
+        .status-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 800; }
+        .status-low { background: #e9f7f0; color: #167a55; }
+        .status-watch { background: #fff2d6; color: #9b6700; }
+        .status-flag { background: #fdecec; color: #b83232; }
+        </style>
     """, unsafe_allow_html=True)
 else:
     col_l_hex = "#818cf8"
@@ -219,22 +207,29 @@ else:
 # Dashboard Main Header
 if "Coach" in app_theme:
     st.markdown("""
-    <div class="coach-header">
-        <h2 style="margin:0; font-size:24px; color:#fff;">CMJ Coach Analyzer v4 — Research & Clinical</h2>
-        <p style="margin:4px 0 0; font-size:12px; color:#dce8f5;">Dr.Chawin and PRIMA MOTION TECHNOLOGY • Comprehensive Biomechanics & Dual-Plate Asymmetry Engine</p>
-    </div>
+        <div class="coach-header">
+            <h2 style="margin:0; font-size:24px; color:#fff;">CMJ Coach Analyzer v4 — Research & Clinical</h2>
+            <p style="margin:4px 0 0; font-size:12px; color:#dce8f5;">PRIMA MOTION TECHNOLOGY • Comprehensive Biomechanics & Dual-Plate Asymmetry Engine</p>
+        </div>
     """, unsafe_allow_html=True)
 else:
     st.title("Free JumpAnz Team - Biomechanics Analysis")
     st.caption("PRIMA MOTION TECHNOLOGY — Technology that unlocks scientific insight")
 
-# Helper Functions
+# Helper Functions with Robust Asymmetry and RFD Calculations
 def asym_badge(val_l, val_r):
     try:
         vl, vr = float(val_l), float(val_r)
-        mx = max(abs(vl), abs(vr))
-        if mx == 0:
+        if vl == 0 and vr == 0:
             return "-", '<span class="status-pill status-low">Equal</span>'
+        
+        # ป้องกัน Asymmetry ทะลุเกิน 100% กรณีข้างหนึ่งบวก อีกข้างลบ
+        if (vl > 0 and vr < 0) or (vl < 0 and vr > 0):
+            txt = f"Opposite Slope ({abs(vl):.0f} vs {abs(vr):.0f})"
+            badge = '<span class="status-pill status-flag">Flag</span>'
+            return txt, badge
+
+        mx = max(abs(vl), abs(vr))
         diff = ((vl - vr) / mx) * 100.0
         txt = f"{abs(diff):.1f}% {'Left' if diff > 0 else 'Right'} higher"
         cls = "status-low" if abs(diff) < 10 else ("status-watch" if abs(diff) < 15 else "status-flag")
@@ -243,78 +238,24 @@ def asym_badge(val_l, val_r):
     except Exception:
         return "-", "-"
 
-# -------------------------------------------------------------
-# Diagnostics View (Rendered when checkbox is checked)
-# -------------------------------------------------------------
-if run_self_test:
-    st.markdown("## 🧪 Developer Self-Test & Diagnostics Suite")
-    st.caption("การตรวจสอบระบบการคำนวณชีวกลศาสตร์ ขอบเขต Index และความแม่นยำเทียบกับ Synthetic Ground Truth Waveform")
-    
-    diag_results = []
-    
-    # Test 1: Butterworth Filter Dynamic Padding
-    try:
-        fs_t = 2000.0
-        test_noise = np.random.normal(700.0, 15.0, int(fs_t * 2))
-        filt_res = apply_signal_filter(test_noise, filter_type="Butterworth LPF", cutoff=50.0, fs=fs_t)
-        if len(filt_res) == len(test_noise) and not np.isnan(filt_res).any():
-            diag_results.append({"Category": "Signal Processing", "Test": "Butterworth Dynamic Padding", "Expected": "Len match & No NaN", "Actual": f"Len={len(filt_res)}, NaNs=0", "Status": "PASSED"})
-        else:
-            diag_results.append({"Category": "Signal Processing", "Test": "Butterworth Dynamic Padding", "Expected": "Len match & No NaN", "Actual": "NaN detected", "Status": "FAILED"})
-    except Exception as ex:
-        diag_results.append({"Category": "Signal Processing", "Test": "Butterworth Dynamic Padding", "Expected": "No Exception", "Actual": str(ex), "Status": "FAILED"})
+def calc_rfd_start(arr, s_idx, dt, ms):
+    n_pts = int((ms / 1000.0) / dt)
+    if s_idx + n_pts < len(arr):
+        return (arr[s_idx + n_pts] - arr[s_idx]) / (ms / 1000.0)
+    return 0.0
 
-    # Test 2: Index Out-of-Bounds Guard Clauses
-    try:
-        short_signal = np.array([100.0, 200.0, 300.0])
-        rfd_val_guard = calc_rfd_start(short_signal, s_idx=2, dt=0.001, ms=50.0)
-        win_val_guard = calc_max_win_rfd(short_signal, s_idx=2, e_idx=1, dt=0.001, win_ms=20.0)
-        if rfd_val_guard == 0.0 and win_val_guard == 0.0:
-            diag_results.append({"Category": "Index Safety", "Test": "RFD Boundary Guard Clauses", "Expected": "0.0 on slice boundary breach", "Actual": f"rfd={rfd_val_guard}, win_rfd={win_val_guard}", "Status": "PASSED"})
-        else:
-            diag_results.append({"Category": "Index Safety", "Test": "RFD Boundary Guard Clauses", "Expected": "0.0 on slice boundary breach", "Actual": "Failed boundary clamp", "Status": "FAILED"})
-    except Exception as ex:
-        diag_results.append({"Category": "Index Safety", "Test": "RFD Boundary Guard Clauses", "Expected": "No Exception", "Actual": str(ex), "Status": "FAILED"})
+def calc_max_win_rfd(arr, s_idx, e_idx, dt, win_ms=20):
+    """
+    คำนวณ Maximum Positive Rate of Force Development ในหน้าต่างเวลาเคลื่อนที่
+    """
+    w = max(1, int((win_ms / 1000.0) / dt))
+    if e_idx - s_idx <= w:
+        return 0.0
+    seg = arr[s_idx:e_idx+1]
+    slopes = (seg[w:] - seg[:-w]) / (w * dt)
+    pos_slopes = slopes[slopes > 0]
+    return float(np.max(pos_slopes)) if len(pos_slopes) > 0 else 0.0
 
-    # Test 3: Synthetic Waveform Ground Truth Verification
-    try:
-        dt_synth = 0.001
-        t_synth = np.arange(0, 3.0, dt_synth)
-        f_synth = np.full(len(t_synth), 700.0)
-        f_synth[500:1000] = np.linspace(700.0, 350.0, 500)
-        f_synth[1000:1400] = np.linspace(350.0, 1600.0, 400)
-        f_synth[1400:1600] = np.linspace(1600.0, 0.0, 200)
-        f_synth[1600:2100] = 0.0  # 0.5s Flight -> JH Theoretical = 30.65 cm
-        f_synth[2100:2400] = np.linspace(0.0, 2500.0, 300)
-        f_synth[2400:] = 700.0
-        
-        rep_synth = calculate_metrics(t_synth, f_synth, f_synth*0.5, f_synth*0.5, dt_synth, 500, 1000, 1200, 1600, 2100, group_by="phase")
-        bw_val = float(rep_synth["1. Weighing & Onset Phase"]["Body Weight (N)"]["Total"])
-        jh_flight_val = float(rep_synth["5. Flight & Performance Phase"]["Jump Height - Flight Time (cm)"]["Total"])
-        rsi_val_out = float(rep_synth["5. Flight & Performance Phase"]["RSI Modified (AU)"]["Total"])
-        
-        if abs(bw_val - 700.0) <= 2.0 and abs(jh_flight_val - 30.65) <= 0.2 and rsi_val_out > 0:
-            diag_results.append({"Category": "Biomechanics Math", "Test": "Synthetic Ground Truth CMJ", "Expected": "BW=700N, JH_flt=30.65cm", "Actual": f"BW={bw_val:.1f}N, JH_flt={jh_flight_val:.2f}cm, RSI={rsi_val_out:.2f}", "Status": "PASSED"})
-        else:
-            diag_results.append({"Category": "Biomechanics Math", "Test": "Synthetic Ground Truth CMJ", "Expected": "BW=700N, JH_flt=30.65cm", "Actual": f"BW={bw_val:.1f}N, JH_flt={jh_flight_val:.2f}cm", "Status": "FAILED"})
-    except Exception as ex:
-        diag_results.append({"Category": "Biomechanics Math", "Test": "Synthetic Ground Truth CMJ", "Expected": "No Exception", "Actual": str(ex), "Status": "FAILED"})
-
-    df_diag = pd.DataFrame(diag_results)
-    pass_cnt = (df_diag["Status"] == "PASSED").sum()
-    total_cnt = len(df_diag)
-    
-    if pass_cnt == total_cnt:
-        st.success(f"✅ **ALL TESTS PASSED ({pass_cnt}/{total_cnt})** — ระบบการคำนวณถูกต้องตรงตาม Ground Truth")
-    else:
-        st.error(f"❌ **TEST FAILURES DETECTED ({pass_cnt}/{total_cnt} Passed)**")
-    
-    st.dataframe(df_diag, width="stretch", hide_index=True)
-    st.markdown("---")
-
-# -------------------------------------------------------------
-# Main Analysis Pipeline
-# -------------------------------------------------------------
 if t is not None and f_total is not None and len(f_total) > 0:
     dt_val = float(dt) if dt is not None and dt > 0 else 0.001
     fs = 1.0 / dt_val
@@ -385,6 +326,9 @@ if t is not None and f_total is not None and len(f_total) > 0:
         lIdx_l=lIdx_l, lIdx_r=lIdx_r, group_by=group_mode_param
     )
 
+    # -------------------------------------------------------------
+    # 2. General Biomechanical Calculations (Always Executed)
+    # -------------------------------------------------------------
     bw = np.mean(sf[:quiet_samples])
     bw_sd = np.std(sf[:quiet_samples])
     mass = bw / g if bw > 0 else 70.0
@@ -584,10 +528,10 @@ if t is not None and f_total is not None and len(f_total) > 0:
         with col_s:
             st.markdown("### Coach snapshot")
             st.markdown(f"""
-            <div class="coach-box">
-                <b>{headline}</b><br><br>
-                JH {jh_imp_val:.1f} cm • RSImod {rsi_val:.2f} m/s • Propulsion net impulse asymmetry {abs(p_diff):.1f}% • Landing peak asymmetry {abs(l_diff):.1f}%.
-            </div>
+                <div class="coach-box">
+                    <b>{headline}</b><br><br>
+                    JH {jh_imp_val:.1f} cm • RSImod {rsi_val:.2f} m/s • Propulsion net impulse asymmetry {abs(p_diff):.1f}% • Landing peak asymmetry {abs(l_diff):.1f}%.
+                </div>
             """, unsafe_allow_html=True)
             st.markdown(f'<div class="coach-action">Propulsion net impulse สมดุลใน trial นี้ใช้เป็น baseline เพื่อติดตาม fatigue / RTP ได้</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="coach-action">ใช้ค่าเฉลี่ย 3–5 valid trials และ CV% ก่อนสรุป pattern ระยะยาว</div>', unsafe_allow_html=True)
@@ -637,21 +581,14 @@ if t is not None and f_total is not None and len(f_total) > 0:
     # -------------------------------------------------------------
     if "Coach" in app_theme:
         st.markdown("---")
-        cv_val = (bw_sd / bw) * 100.0
-        jh_diff_val = abs(jh_flt_val - jh_imp_val)
-        jh_diff_pct = jh_diff_val / max(jh_imp_val, 1e-6) * 100.0
-        qc_pass = (cv_val < 2.0) and (jh_diff_pct < 10.0)
-
-        # QC Alert Banner Warning
-        if not qc_pass:
-            if jh_diff_pct >= 10.0:
-                st.warning(f"⚠️ **QC Flag (JH Discrepancy > 10%):** ค่าความสูงจากการกระโดดระหว่าง Impulse ({jh_imp_val:.1f} cm) และ Flight ({jh_flt_val:.1f} cm) มีความต่างกัน {jh_diff_pct:.1f}% กรุณาตรวจสอบการงอเข่า/ยกขาตอน Landing หรือปรับ Boundary Takeoff/Landing")
-            if cv_val >= 2.0:
-                st.warning(f"⚠️ **QC Flag (Quiet Standing CV > 2.0%):** ค่าความแปรปรวนช่วงยืนนิ่งอยู่ที่ {cv_val:.2f}% ผู้ถูกทดสอบอาจมีการขยับตัวก่อนเริ่ม Jump Initiation")
-
         r1_c1, r1_c2 = st.columns(2)
         with r1_c1:
             st.markdown("### Data quality checks")
+            cv_val = (bw_sd / bw) * 100.0
+            jh_diff_val = abs(jh_flt_val - jh_imp_val)
+            jh_diff_pct = jh_diff_val / max(jh_imp_val, 1e-6) * 100.0
+            qc_pass = (cv_val < 2.0) and (jh_diff_pct < 10.0)
+            
             st.markdown(f'<div class="{"qc-banner-pass" if qc_pass else "qc-banner-review"}">STATUS: {"PASS" if qc_pass else "REVIEW"}</div>', unsafe_allow_html=True)
             qc_df = pd.DataFrame([
                 {"Check Item": "Sampling", "Value": f"{fs:.0f} Hz", "Status": "Derived from force samples ÷ QTM trial duration"},
@@ -706,7 +643,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
             fig_p = go.Figure()
             fig_p.add_trace(go.Scatter(x=t[sIdx:tIdx+1], y=power_wkg[sIdx:tIdx+1], line=dict(color="#ed7d31", width=1.5), name="COM power"))
             fig_p.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
-            fig_v.update_layout(title="COM power (W/kg)", height=260, margin=dict(l=30, r=30, t=40, b=20))
+            fig_p.update_layout(title="COM power (W/kg)", height=260, margin=dict(l=30, r=30, t=40, b=20))
             st.plotly_chart(fig_p, width="stretch")
 
         rl1, rl2 = st.columns(2)
@@ -824,13 +761,13 @@ if t is not None and f_total is not None and len(f_total) > 0:
     
     st.dataframe(pd.DataFrame(table_rows), width="stretch", hide_index=True)
 
-    # Package Coach PDF Context
+    # Package Coach PDF Context with Direct Dashboard Thai Strings
     coach_pdf_context = {
         "jh_imp": f"{jh_imp_val:.1f}", "jh_flt": f"{jh_flt_val:.1f}", "rsi": f"{rsi_val:.2f}", "ppk": f"{ppk_wkg:.1f}",
-        "headline": "Bilateral propulsion net impulse is balanced in this trial." if abs(p_diff) < 10 else f"Directional asymmetry in propulsion net impulse ({abs(p_diff):.1f}%).",
-        "sub": f"JH {jh_imp_val:.1f} cm • RSImod {rsi_val:.2f} m/s • Propulsion Asym {abs(p_diff):.1f}% • Landing Asym {abs(l_diff):.1f}%.",
-        "act1": "Propulsion net impulse is balanced; use as baseline for fatigue monitoring.",
-        "act2": "Use average of 3-5 valid trials and CV% before concluding pattern.",
+        "headline": headline,
+        "sub": f"JH {jh_imp_val:.1f} cm • RSImod {rsi_val:.2f} m/s • Propulsion net impulse asymmetry {abs(p_diff):.1f}% • Landing peak asymmetry {abs(l_diff):.1f}%.",
+        "act1": "Propulsion net impulse สมดุลใน trial นี้ใช้เป็น baseline เพื่อติดตาม fatigue / RTP ได้",
+        "act2": "ใช้ค่าเฉลี่ย 3–5 valid trials และ CV% ก่อนสรุป pattern ระยะยาว",
         
         "pk_br_l": f"{pk_br_l:.0f}", "pk_br_r": f"{pk_br_r:.0f}", "asym_pk_br": asym_badge(pk_br_l, pk_br_r)[0],
         "br_net_l": f"{br_net_l:.1f}", "br_net_r": f"{br_net_r:.1f}", "asym_br_net": asym_badge(br_net_l, br_net_r)[0],
@@ -897,5 +834,5 @@ if t is not None and f_total is not None and len(f_total) > 0:
         mime="application/pdf",
         key="main_download_btn"
     )
-elif not run_self_test:
-    st.info("👈 กรุณาเลือก Input Mode และอัปโหลดไฟล์ข้อมูล Force Plate จาก Sidebar เพื่อเริ่มต้นการวิเคราะห์ค่ะ")
+else:
+    st.info("Please upload data file(s) to begin analysis.")
