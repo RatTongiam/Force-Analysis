@@ -141,10 +141,6 @@ else:
     filter_size = 1
 
 threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
-fn_plate = st.sidebar.number_input(
-    "Force plate natural frequency fn (Hz, 0 = unknown)", min_value=0.0, value=0.0, step=10.0,
-    help="ใช้ค่า fn ในสภาพติดตั้งจริง (วัดด้วย tap test) ไม่ใช่เฉพาะ datasheet"
-)
 
 # -------------------------------------------------------------
 # 3. Sidebar: Presentation Theme & Clinical Setup
@@ -480,6 +476,8 @@ if t is not None and f_total is not None and len(f_total) > 0:
         headline = "การแบ่งแรงซ้าย–ขวาช่วง propulsion อยู่ในช่วงค่อนข้างสมดุลของ trial นี้"
 
     # Impact frequency (ใช้สัญญาณ RAW ที่ลบ offset แล้วเท่านั้น ไม่ผ่าน filter)
+    # fn กรอกที่ช่องในส่วนผลลัพธ์ (key=fn_plate_hz) ค่าจะถูกอ่านจาก session_state ในการรันรอบถัดไป
+    fn_plate = float(st.session_state.get("fn_plate_hz", 0.0) or 0.0)
     try:
         impact_res = analyze_impact(
             {"Left": f_left_zeroed, "Right": f_right_zeroed, "Total": f_total_zeroed},
@@ -724,6 +722,10 @@ if t is not None and f_total is not None and len(f_total) > 0:
             st.dataframe(tot_land_df, hide_index=True, width="stretch")
 
         st.markdown("### Impact frequency vs force-plate natural frequency")
+        st.number_input(
+            "Force plate natural frequency fn (Hz) — 0 = unknown", min_value=0.0, step=10.0, key="fn_plate_hz",
+            help="ใช้ค่า fn ในสภาพติดตั้งจริง (วัดด้วย tap test) ไม่ใช่เฉพาะ datasheet ถ้าไม่ทราบให้เว้นเป็น 0"
+        )
         if impact_rows:
             st.dataframe(pd.DataFrame(impact_rows), hide_index=True, width="stretch")
             fig_imp = go.Figure()
@@ -742,7 +744,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
             st.caption("f_used = ค่าสูงสุดของ f_rise / f_dur / f_99% energy | Status: fn/f ≥ 10 Low, 4.5–10 Monitor, <4.5 Flag | "
                        "Amp. error คิดจากระบบ 2nd-order แบบ undamped | fn ต้องเป็นค่าในสภาพติดตั้งจริง ควรยืนยันด้วย tap test")
             if fn_plate <= 0:
-                st.info("ยังไม่ได้ใส่ fn ของแผ่น (sidebar) จึงแสดงเฉพาะความถี่ของ impact")
+                st.info("ยังไม่ได้ใส่ fn ของแผ่น (ช่องด้านบน) จึงแสดงเฉพาะความถี่ของ impact")
 
         rr1, rr2 = st.columns(2)
         with rr1:
