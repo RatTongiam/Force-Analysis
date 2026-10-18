@@ -10,7 +10,7 @@ from parsers import (
     parse_single_csv_cforce,
     parse_musclelab_csv
 )
-from biomechanics import apply_signal_filter, detect_phases_sequential, calculate_metrics
+from biomechanics import apply_signal_filter, detect_phases_sequential, calculate_metrics, find_quiet_window, compute_bw_reference
 from pdf_generator import generate_pdf_report
 from impact_frequency import analyze_impact, summarize_impact
 
@@ -262,11 +262,60 @@ if t is not None and f_total is not None and len(f_total) > 0:
     g = 9.80665
     
     n_samples = len(f_total)
-    quiet_samples = max(1, min(int(0.5 / dt_val), n_samples))
+    quiet_samples = max(1, min(int(0.5 / dt_val), n_samples))  # fallback เท่านั้น
+
+    # ---- Body-weight reference (quiet-standing window) ----
+    auto_q = find_quiet_window(f_total, fs)
+    t_lo, t_hi = float(t[0]), float(t[-1])
+    if st.session_state.get("bw_sig") != file_signature:
+        st.session_state["bw_sig"] = file_signature
+        st.session_state["bw_method"] = "Auto" if auto_q["ok"] else "Select quiet window"
+        if auto_q["start"] is not None:
+            st.session_state["bw_win"] = (float(t[auto_q["start"]]), float(t[auto_q["end"] - 1]))
+        else:
+            st.session_state["bw_win"] = (t_lo, min(t_hi, t_lo + 0.5))
+        st.session_state["bw_mass"] = round(auto_q["bw"] / g, 1) if (auto_q["bw"] or 0) >= 200 else 70.0
+
+    st.sidebar.markdown("---")
+    st.sidebar.header("⚖️ Body weight reference")
+    bw_method = st.sidebar.radio("Method", ["Auto", "Select quiet window", "Enter body mass (kg)"], key="bw_method")
+    q_start, q_end = (auto_q["start"], auto_q["end"]) if auto_q["start"] is not None else (0, quiet_samples)
+    bw_override = None
+    if bw_method == "Auto":
+        bw_src_txt = f"Auto window {t[q_start]:.2f}–{t[q_end - 1]:.2f} s"
+    elif bw_method == "Select quiet window":
+        w0, w1 = st.sidebar.slider("Quiet-standing window (s)", min_value=t_lo, max_value=t_hi, step=dt_val, format="%.2f", key="bw_win")
+        q_start = int(round((w0 - t_lo) / dt_val))
+        q_end = int(round((w1 - t_lo) / dt_val)) + 1
+        bw_src_txt = f"Manual window {w0:.2f}–{w1:.2f} s"
+    else:
+        kg_in = st.sidebar.number_input("Body mass (kg)", min_value=20.0, max_value=250.0, step=0.5, key="bw_mass")
+        bw_override = kg_in * g
+        bw_src_txt = f"Manual body mass {kg_in:.1f} kg"
+    q_start = max(0, min(q_start, n_samples - 1))
+    q_end = max(q_start + 1, min(q_end, n_samples))
+    q_vals = f_total[q_start:q_end]
+    q_mean = float(np.mean(q_vals))
+    q_cv = float(np.std(q_vals)) / q_mean * 100.0 if q_mean > 0 else float("inf")
+    bw_ref_n = bw_override if bw_override else q_mean
+
+    if not auto_q["ok"]:
+        st.warning("⚠️ หา quiet-standing window อัตโนมัติไม่ผ่านเกณฑ์: " + "; ".join(auto_q["warnings"]) +
+                   " — เปิดเครื่องมือเลือกช่วงเอง / ใส่น้ำหนักตัวที่ sidebar (Body weight reference) ให้แล้ว")
+    block_msgs = []
+    if bw_ref_n < 200.0:
+        block_msgs.append(f"BW ที่ใช้ = {bw_ref_n:.1f} N (< 200 N) ช่วงที่เลือกน่าจะเป็นช่วงที่ไม่มีคนยืนบนแผ่น")
+    if bw_override is None and (q_end - q_start) * dt_val < 0.25:
+        block_msgs.append("ช่วง quiet window สั้นกว่า 0.25 s")
+    if block_msgs:
+        st.error("หยุดการคำนวณเพื่อไม่ให้ได้ค่าที่ผิดปกติ: " + "; ".join(block_msgs) + " — โปรดเลือกช่วงยืนนิ่งที่มีคนอยู่บนแผ่น หรือใส่น้ำหนักตัวเองที่ sidebar")
+        st.stop()
+    if bw_override is None and q_cv > 3.0:
+        st.warning(f"ช่วงที่เลือกยังไม่นิ่งมาก (CV {q_cv:.1f}% > 3%) ตรวจสอบก่อนใช้ผล")
 
     # Single-System Phase Detection on Zeroed Data
     sIdx_auto, bIdx_auto, zIdx_auto, tIdx_auto, lIdx_auto, lIdx_l, lIdx_r, offsets = detect_phases_sequential(
-        t, f_total, dt_val, quiet_samples=quiet_samples, 
+        t, f_total, dt_val, quiet_samples=quiet_samples, quiet_window=(q_start, q_end), bw_override=bw_override,
         filter_type=filter_type, cutoff=cutoff_freq, 
         sl_raw=f_left, sr_raw=f_right
     )
@@ -324,11 +373,11 @@ if t is not None and f_total is not None and len(f_total) > 0:
     report = calculate_metrics(
         t, f_total, f_left, f_right, dt_val, sIdx, bIdx, zIdx, tIdx, lIdx, 
         filter_type=filter_type, cutoff=cutoff_freq, offsets=offsets,
-        lIdx_l=lIdx_l, lIdx_r=lIdx_r, group_by=group_mode_param
+        lIdx_l=lIdx_l, lIdx_r=lIdx_r, group_by=group_mode_param,
+        quiet_window=(q_start, q_end), bw_override=bw_override
     )
 
-    bw = np.mean(sf[:quiet_samples])
-    bw_sd = np.std(sf[:quiet_samples])
+    bw, bw_sd, bw_l_ref, bw_r_ref = compute_bw_reference(sf, sl, sr, q_start, q_end, bw_override)
     mass = bw / g if bw > 0 else 70.0
 
     vel_total = np.zeros(n_samples)
@@ -350,8 +399,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
     ppk_wkg = np.max(power_wkg[zIdx:tIdx+1]) if tIdx > zIdx else 0.0
     com_depth = abs(disp_total[zIdx] - disp_total[sIdx]) * 100.0
 
-    l_bw = np.mean(sl[:quiet_samples])
-    r_bw = np.mean(sr[:quiet_samples])
+    l_bw, r_bw = bw_l_ref, bw_r_ref
     
     br_net_l = float(np.trapezoid(sl[bIdx:zIdx+1] - l_bw, dx=dt_val)) if zIdx > bIdx else 0.0
     br_net_r = float(np.trapezoid(sr[bIdx:zIdx+1] - r_bw, dx=dt_val)) if zIdx > bIdx else 0.0
@@ -597,13 +645,14 @@ if t is not None and f_total is not None and len(f_total) > 0:
             cv_val = (bw_sd / bw) * 100.0
             jh_diff_val = abs(jh_flt_val - jh_imp_val)
             jh_diff_pct = jh_diff_val / max(jh_imp_val, 1e-6) * 100.0
-            qc_pass = (cv_val < 2.0) and (jh_diff_pct < 10.0)
+            qc_pass = ((bw_override is not None) or cv_val < 2.0) and (jh_diff_pct < 10.0)
             
             st.markdown(f'<div class="{"qc-banner-pass" if qc_pass else "qc-banner-review"}">STATUS: {"PASS" if qc_pass else "REVIEW"}</div>', unsafe_allow_html=True)
             qc_df = pd.DataFrame([
                 {"Check Item": "Sampling", "Value": f"{fs:.0f} Hz", "Status": "Derived from force samples ÷ QTM trial duration"},
                 {"Check Item": "Flight zero-offset", "Value": f"{offset_l:.1f} / {offset_r:.1f} N", "Status": "Constant unloaded residual subtracted L / R"},
-                {"Check Item": "Quiet-standing CV", "Value": f"{cv_val:.2f}%", "Status": f"BW {bw:.2f} N • SD {bw_sd:.2f} N"},
+                {"Check Item": "Body weight source", "Value": bw_src_txt, "Status": f"BW {bw:.1f} N ({bw / g:.1f} kg)"},
+                {"Check Item": "Quiet-standing CV", "Value": "n/a (manual mass)" if bw_override else f"{cv_val:.2f}%", "Status": f"BW {bw:.2f} N • SD {bw_sd:.2f} N"},
                 {"Check Item": "JH method agreement", "Value": f"{jh_diff_val:.2f} cm", "Status": f"{jh_diff_pct:.1f}% difference: impulse vs flight-time"}
             ])
             st.dataframe(qc_df, hide_index=True, width="stretch")
@@ -819,7 +868,7 @@ if t is not None and f_total is not None and len(f_total) > 0:
         "rfd200_pr_l": f"{rfd200_pr_l:.0f}", "rfd200_pr_r": f"{rfd200_pr_r:.0f}", "asym_rfd200_pr": asym_badge(rfd200_pr_l, rfd200_pr_r)[0],
 
         "fs": f"{fs:.0f}", "zero_off": f"{offset_l:.1f} / {offset_r:.1f} N",
-        "cv": f"{cv_val:.2f}", "bw": f"{bw:.2f}", "bw_sd": f"{bw_sd:.2f}",
+        "cv": ("n/a" if bw_override else f"{cv_val:.2f}"), "bw": f"{bw:.2f}", "bw_sd": f"{bw_sd:.2f}",
         "fres": f"{abs(offset_l)+abs(offset_r):.1f}", "fres_l": f"{offset_l:.1f}", "fres_r": f"{offset_r:.1f}",
         "jh_diff": f"{jh_diff_val:.2f}", "jh_diff_pct": f"{jh_diff_pct:.1f}",
         "closure": f"{abs(float(np.trapezoid(sf[sIdx:tIdx+1]-bw, dx=dt_val)) - mass*v_to):.4f}",

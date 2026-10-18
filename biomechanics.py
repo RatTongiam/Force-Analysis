@@ -74,15 +74,73 @@ def calc_max_win_rfd(arr: np.ndarray, s_idx: int, e_idx: int, dt: float, win_ms:
     slopes = (seg[w:] - seg[:-w]) / (w * dt)
     return float(np.max(slopes)) if len(slopes) > 0 else 0.0
 
-def detect_phases_sequential(t: np.ndarray, sf_raw: np.ndarray, dt: float, quiet_samples: Optional[int] = None, filter_type: str = "Butterworth LPF", cutoff: float = 50.0, sl_raw: Optional[np.ndarray] = None, sr_raw: Optional[np.ndarray] = None) -> Tuple[int, int, int, int, int, int, int, Tuple[float, float]]:
+def find_quiet_window(f_total: np.ndarray, fs: float, win_s: float = 0.5, min_bw_n: float = 200.0,
+                      max_cv_pct: float = 3.0, rel_tol: float = 0.15) -> Dict[str, Any]:
+    """
+    หาช่วงยืนนิ่ง (quiet standing) อัตโนมัติจากแรงรวม Fz
+    - อ้างอิงระดับโหลดจาก median ของตัวอย่างที่มีโหลดบนแผ่น (> 100 N)
+    - ค้นหน้าต่างยาว win_s ที่ค่าเฉลี่ย >= min_bw_n และอยู่ในช่วง +-rel_tol ของระดับอ้างอิง
+    - เลือกหน้าต่างที่ CV (sd/mean) ต่ำที่สุด
+    คืน dict: ok, start, end (index, end เป็น exclusive), bw, sd, cv_pct, warnings
+    ok = False เมื่อไม่พบ หรือ BW < min_bw_n หรือ CV > max_cv_pct (ผู้ใช้ควรตรวจ/เลือกเอง)
+    """
+    f = np.asarray(f_total, dtype=float)
+    n, w = len(f), int(round(win_s * fs))
+    out: Dict[str, Any] = {"ok": False, "start": None, "end": None, "bw": None, "sd": None, "cv_pct": None, "warnings": []}
+    if n < w + 1 or w < 2:
+        out["warnings"].append("ไฟล์สั้นเกินไปสำหรับหา quiet window")
+        return out
+    loaded = f[f > 100.0]
+    if len(loaded) < w:
+        out["warnings"].append("แทบไม่มีช่วงที่มีโหลดบนแผ่น (> 100 N)")
+        return out
+    ref = float(np.median(loaded))
+    step = max(1, int(round(0.02 * fs)))
+    starts = np.arange(0, n - w + 1, step)
+    c1 = np.concatenate([[0.0], np.cumsum(f)])
+    c2 = np.concatenate([[0.0], np.cumsum(f * f)])
+    mean = (c1[starts + w] - c1[starts]) / w
+    sd = np.sqrt(np.maximum((c2[starts + w] - c2[starts]) / w - mean ** 2, 0.0))
+    cv = sd / np.maximum(mean, 1e-9) * 100.0
+    valid = (mean >= min_bw_n) & (np.abs(mean - ref) <= rel_tol * ref)
+    if not valid.any():
+        out["warnings"].append(f"ไม่พบช่วง {win_s:.1f} s ที่แรงรวมนิ่งใกล้ระดับโหลดปกติ ({ref:.0f} N)")
+        return out
+    k = int(np.argmin(np.where(valid, cv, np.inf)))
+    out.update(start=int(starts[k]), end=int(starts[k] + w), bw=float(mean[k]), sd=float(sd[k]), cv_pct=float(cv[k]))
+    if out["bw"] < min_bw_n:
+        out["warnings"].append(f"BW {out['bw']:.0f} N ต่ำกว่า {min_bw_n:.0f} N")
+    elif out["cv_pct"] > max_cv_pct:
+        out["warnings"].append(f"ช่วงยืนนิ่งที่ดีที่สุดยังมี CV {out['cv_pct']:.1f}% (> {max_cv_pct:.0f}%)")
+    else:
+        out["ok"] = True
+    return out
+
+
+def compute_bw_reference(sf: np.ndarray, sl: np.ndarray, sr: np.ndarray, q0: int, q1: int,
+                         bw_override: Optional[float] = None) -> Tuple[float, float, float, float]:
+    """คืน (bw_total, sd, bw_left, bw_right) จากช่วง [q0, q1) หรือจากน้ำหนักที่ผู้ใช้กำหนด (N)"""
+    q0, q1 = max(0, int(q0)), max(int(q0) + 1, int(q1))
+    bw_w = float(np.mean(sf[q0:q1]))
+    if bw_override:
+        share_l = float(np.mean(sl[q0:q1])) / bw_w if bw_w > 50.0 else 0.5
+        share_l = min(max(share_l, 0.0), 1.0)
+        return float(bw_override), 0.0, float(bw_override) * share_l, float(bw_override) * (1.0 - share_l)
+    return bw_w, float(np.std(sf[q0:q1])), float(np.mean(sl[q0:q1])), float(np.mean(sr[q0:q1]))
+
+
+def detect_phases_sequential(t: np.ndarray, sf_raw: np.ndarray, dt: float, quiet_samples: Optional[int] = None, filter_type: str = "Butterworth LPF", cutoff: float = 50.0, sl_raw: Optional[np.ndarray] = None, sr_raw: Optional[np.ndarray] = None, quiet_window: Optional[Tuple[int, int]] = None, bw_override: Optional[float] = None) -> Tuple[int, int, int, int, int, int, int, Tuple[float, float]]:
     n_samples = len(sf_raw)
     fs = 1.0 / dt
     g = 9.80665
 
     sf = apply_signal_filter(sf_raw, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
-    win_bw = min(int(1.0 * fs), n_samples) if quiet_samples is None else quiet_samples
-    bw = np.mean(sf[:win_bw])
-    force_sd = np.std(sf[:win_bw])
+    if quiet_window is not None:
+        q0, q1 = max(0, int(quiet_window[0])), min(n_samples, int(quiet_window[1]))
+    else:
+        q0, q1 = 0, (min(int(1.0 * fs), n_samples) if quiet_samples is None else quiet_samples)
+    bw = float(bw_override) if bw_override else np.mean(sf[q0:q1])
+    force_sd = np.std(sf[q0:q1])
     mass = bw / g if bw > 0 else 70.0
 
     flight_threshold = 25.0
@@ -154,7 +212,7 @@ def detect_phases_sequential(t: np.ndarray, sf_raw: np.ndarray, dt: float, quiet
         lIdx_l, lIdx_r, (offset_l, offset_r)
     )
 
-def calculate_metrics(t: np.ndarray, sf_raw: np.ndarray, sl_raw: np.ndarray, sr_raw: np.ndarray, dt: float, sIdx: int, bIdx: int, zIdx: int, tIdx: int, lIdx: int, filter_type: str = "Butterworth LPF", cutoff: float = 50.0, offsets: Tuple[float, float] = (0.0, 0.0), lIdx_l: Optional[int] = None, lIdx_r: Optional[int] = None, group_by: str = "phase") -> Dict[str, Any]:
+def calculate_metrics(t: np.ndarray, sf_raw: np.ndarray, sl_raw: np.ndarray, sr_raw: np.ndarray, dt: float, sIdx: int, bIdx: int, zIdx: int, tIdx: int, lIdx: int, filter_type: str = "Butterworth LPF", cutoff: float = 50.0, offsets: Tuple[float, float] = (0.0, 0.0), lIdx_l: Optional[int] = None, lIdx_r: Optional[int] = None, group_by: str = "phase", quiet_window: Optional[Tuple[int, int]] = None, bw_override: Optional[float] = None) -> Dict[str, Any]:
     n_samples = len(sf_raw)
     fs = 1.0 / dt
     g = 9.80665
@@ -168,10 +226,11 @@ def calculate_metrics(t: np.ndarray, sf_raw: np.ndarray, sl_raw: np.ndarray, sr_
     sl = apply_signal_filter(sl_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
     sr = apply_signal_filter(sr_zeroed, filter_type=filter_type, cutoff=cutoff, fs=fs, window_size=15)
 
-    quiet_samples = max(1, min(int(0.5 / dt), n_samples))
-    bw = np.mean(sf[:quiet_samples])
-    bw_left = np.mean(sl[:quiet_samples])
-    bw_right = np.mean(sr[:quiet_samples])
+    if quiet_window is not None:
+        q0, q1 = max(0, int(quiet_window[0])), min(n_samples, int(quiet_window[1]))
+    else:
+        q0, q1 = 0, max(1, min(int(0.5 / dt), n_samples))
+    bw, _bw_sd, bw_left, bw_right = compute_bw_reference(sf, sl, sr, q0, q1, bw_override)
     mass = bw / g if bw > 0 else 70.0
 
     vel_total = np.zeros(n_samples)
