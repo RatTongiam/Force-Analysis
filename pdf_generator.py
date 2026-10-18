@@ -512,6 +512,27 @@ def build_modern_coach_pdf(doc, report, t, sf, sl, sr, t_start, t_braking, t_spl
     ]))
     story.append(interp_table)
 
+    # Impact frequency vs plate natural frequency
+    imp_rows = ctx.get('impact_rows') or []
+    if imp_rows:
+        story.append(Spacer(1, 2.5))
+        hdr = ["Channel", "Rise 10-90% (ms)", "f_rise (Hz)", "f_dur (Hz)", "f_99% (Hz)", "f_used (Hz)", "fn/f", "Amp. err (%)", "Status"]
+        keys = ["Channel", "Rise 10-90% (ms)", "f_rise (Hz)", "f_dur (Hz)", "f_99% energy (Hz)", "f_used (Hz)", "fn / f", "Amp. error (%)", "Status"]
+        imp_data = [[Paragraph(f"<b>{h}</b>", th_style) for h in hdr]]
+        for r in imp_rows:
+            imp_data.append([Paragraph(str(r.get(k, '-')), cell_lbl if i == 0 else cell_val) for i, k in enumerate(keys)])
+        imp_table = Table(imp_data, colWidths=[52, 70, 52, 52, 52, 56, 40, 58, 113])
+        imp_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f1f5f9')),
+            ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e2e8f0')),
+            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
+            ('TOPPADDING', (0, 0), (-1, -1), 0.8),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 0.8),
+        ]))
+        story.append(Paragraph(f"<b>Landing impact frequency vs force-plate fn</b> (fn = {ctx.get('fn_plate', 'not set')} Hz)", cell_lbl))
+        story.append(imp_table)
+        story.append(Paragraph("Estimated from RAW signal. Status: fn/f >= 10 Low, 4.5-10 Monitor, <4.5 Flag. Effective fn should be verified by an impact (tap) test.", cell_lbl))
+
     doc.build(story)
 
 # -------------------------------------------------------------

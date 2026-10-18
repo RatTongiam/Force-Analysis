@@ -12,6 +12,7 @@ from parsers import (
 )
 from biomechanics import apply_signal_filter, detect_phases_sequential, calculate_metrics
 from pdf_generator import generate_pdf_report
+from impact_frequency import analyze_impact, summarize_impact
 
 st.set_page_config(layout="wide", page_title="Free JumpAnz Team - Prima Motion Tech")
 
@@ -140,6 +141,10 @@ else:
     filter_size = 1
 
 threshold_alert = st.sidebar.number_input("Asymmetry Alert %", value=15.0, step=1.0)
+fn_plate = st.sidebar.number_input(
+    "Force plate natural frequency fn (Hz, 0 = unknown)", min_value=0.0, value=0.0, step=10.0,
+    help="ใช้ค่า fn ในสภาพติดตั้งจริง (วัดด้วย tap test) ไม่ใช่เฉพาะ datasheet"
+)
 
 # -------------------------------------------------------------
 # 3. Sidebar: Presentation Theme & Clinical Setup
@@ -426,6 +431,17 @@ if t is not None and f_total is not None and len(f_total) > 0:
     else:
         headline = "การแบ่งแรงซ้าย–ขวาช่วง propulsion อยู่ในช่วงค่อนข้างสมดุลของ trial นี้"
 
+    # Impact frequency (ใช้สัญญาณ RAW ที่ลบ offset แล้วเท่านั้น ไม่ผ่าน filter)
+    try:
+        impact_res = analyze_impact(
+            {"Left": f_left_zeroed, "Right": f_right_zeroed, "Total": f_total_zeroed},
+            fs, tIdx, lIdx, fn_hz=(fn_plate if fn_plate > 0 else None)
+        )
+        impact_rows = summarize_impact(impact_res, fn_plate if fn_plate > 0 else None)
+    except Exception as e:
+        impact_res, impact_rows = {}, []
+        st.warning(f"Impact frequency analysis skipped: {e}")
+
     sens_res = {}
     for fc_test, name in [(None, "raw"), (20.0, "20"), (30.0, "30"), (50.0, "50")]:
         filt_sf = f_total_zeroed if fc_test is None else apply_signal_filter(f_total_zeroed, "Butterworth LPF", cutoff=fc_test, fs=fs)
@@ -658,6 +674,27 @@ if t is not None and f_total is not None and len(f_total) > 0:
             ])
             st.dataframe(tot_land_df, hide_index=True, width="stretch")
 
+        st.markdown("### Impact frequency vs force-plate natural frequency")
+        if impact_rows:
+            st.dataframe(pd.DataFrame(impact_rows), hide_index=True, width="stretch")
+            fig_imp = go.Figure()
+            for ch_name, ch_color in [("Left", col_l_hex), ("Right", col_r_hex), ("Total", col_tot_hex)]:
+                r_ = impact_res.get(ch_name, {})
+                if "freqs" in r_:
+                    m_ = (r_["freqs"] >= 1.0) & (r_["freqs"] <= min(500.0, fs / 2))
+                    fig_imp.add_trace(go.Scatter(x=r_["freqs"][m_], y=r_["amp"][m_], name=ch_name, line=dict(color=ch_color, width=1.3)))
+            if "Total" in impact_res and impact_res["Total"].get("f_worst_hz"):
+                fig_imp.add_vline(x=impact_res["Total"]["f_worst_hz"], line_dash="dash", line_color="#16a34a", annotation_text="f used (Total)")
+            if fn_plate > 0 and fn_plate <= min(500.0, fs / 2):
+                fig_imp.add_vline(x=fn_plate, line_dash="dash", line_color="#dc2626", annotation_text="fn plate")
+            fig_imp.update_layout(title="Landing amplitude spectrum (RAW, N·s)", xaxis_title="Frequency (Hz)", yaxis_title="Amplitude (N·s)",
+                                  yaxis_type="log", height=300, margin=dict(l=30, r=30, t=40, b=20))
+            st.plotly_chart(fig_imp, width="stretch")
+            st.caption("f_used = ค่าสูงสุดของ f_rise / f_dur / f_99% energy | Status: fn/f ≥ 10 Low, 4.5–10 Monitor, <4.5 Flag | "
+                       "Amp. error คิดจากระบบ 2nd-order แบบ undamped | fn ต้องเป็นค่าในสภาพติดตั้งจริง ควรยืนยันด้วย tap test")
+            if fn_plate <= 0:
+                st.info("ยังไม่ได้ใส่ fn ของแผ่น (sidebar) จึงแสดงเฉพาะความถี่ของ impact")
+
         rr1, rr2 = st.columns(2)
         with rr1:
             st.markdown("### Research-grade derived metrics")
@@ -814,6 +851,9 @@ if t is not None and f_total is not None and len(f_total) > 0:
         "sens_land_raw": f"{sens_res['raw']['land']:.0f}", "sens_land_20": f"{sens_res['20']['land']:.0f}", "sens_land_30": f"{sens_res['30']['land']:.0f}", "sens_land_50": f"{sens_res['50']['land']:.0f}", "sens_land_sp": f"{calc_spread([sens_res['raw']['land'], sens_res['20']['land'], sens_res['30']['land'], sens_res['50']['land']]):.1f}%",
         "sens_rfd_raw": f"{sens_res['raw']['rfd']:.0f}", "sens_rfd_20": f"{sens_res['20']['rfd']:.0f}", "sens_rfd_30": f"{sens_res['30']['rfd']:.0f}", "sens_rfd_50": f"{sens_res['50']['rfd']:.0f}", "sens_rfd_sp": f"{calc_spread([sens_res['raw']['rfd'], sens_res['20']['rfd'], sens_res['30']['rfd'], sens_res['50']['rfd']]):.1f}%",
     } if "Coach" in app_theme else {}
+    if coach_pdf_context:
+        coach_pdf_context["impact_rows"] = impact_rows
+        coach_pdf_context["fn_plate"] = f"{fn_plate:.0f}" if fn_plate > 0 else "not set"
 
     pdf_bytes = generate_pdf_report(
         report, t, sf, sl, sr, t_start, t_braking, t_split, t_takeoff, t_landing,
